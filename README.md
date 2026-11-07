@@ -17,4 +17,4 @@ These are the same checks CI runs on every PR. Run Python through uv (`uv run py
 
 ## Running the birthday pilot
 
-See [docs/running.md](docs/running.md): deploy the model server on Modal, play the games, score the logs. [docs/costs.md](docs/costs.md) tracks what each run has cost and what the next ones should cost.
+See [docs/running.md](docs/running.md): deploy the model server on Modal, play the games, score the logs. [docs/results.md](docs/results.md) has the results so far, and [docs/costs.md](docs/costs.md) tracks what each run has cost and what the next ones should cost.
