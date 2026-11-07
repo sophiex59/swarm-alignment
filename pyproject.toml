@@ -2,7 +2,9 @@
 name = "swarm-alignment"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "openai>=3.46.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,4 +27,7 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.4",
+]
+modal = [
+    "modal>=1.6.3",
 ]
