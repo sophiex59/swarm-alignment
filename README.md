@@ -7,6 +7,7 @@ Research sprint: **can a swarm discover a hidden advantage?** Five same-model ag
 | File | Contents |
 |---|---|
 | [docs/discovery.md](docs/discovery.md) | The sprint idea, plain-language definitions of "discovery" vs copying, related work with links, design risks and fixes, a suggested MVP and open questions |
+| [docs/modal-plan.md](docs/modal-plan.md) | Draft pilot plan for the birthday baseline (agreed on the 7 Nov call): vLLM on a Modal GPU, task, conditions, metrics, cost estimate, timeline and open decisions |
 
 ## Getting started
 
