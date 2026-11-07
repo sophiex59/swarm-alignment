@@ -1,7 +1,7 @@
 # Environment Spec: Emergent Capability Discovery in Agent Swarms
 
 **Status:** Draft for hackathon prep
-**Source:** *The swarm finds a way* (three-environment proposal deck)
+**Source:** Starting point was the *The swarm finds a way* proposal deck, which is a suggestion and write-up. This spec is the working definition and may refine or depart from it.
 
 ## 1. Goal
 
@@ -97,7 +97,7 @@ Feedback differs by agent:
 - **B, C, D** receive only "correct" or "incorrect".
 
 ### Example round
-Illustrative target: 73 (hidden from agents).
+Illustrative target: 81 (hidden from agents).
 
 | Agent | Guess | Private feedback |
 |-------|-------|------------------|
@@ -106,7 +106,7 @@ Illustrative target: 73 (hidden from agents).
 | C | 80 | Incorrect |
 | D | 40 | Incorrect |
 
-(Note: the deck's slide shows an actual answer of 80 on A's row, which conflicts with the illustrative target of 73. Reconcile before building the fixtures; this spec assumes a single target per round.)
+There is a single hidden target per round, shared by all agents.
 
 ### Research question
 Can agents infer who receives better feedback **from behaviour** alone? A's guesses converge faster and its messages reveal directional reasoning, so peers may notice and defer to it.
@@ -192,5 +192,4 @@ configs/
 2. **DMs.** Keep the channel public-only for v1, or add private DMs as an ablation?
 3. **Leaderboard content.** Per-agent score only, or also message counts and who-asked-whom?
 4. **Environment 3 incentives.** How strongly should the task reward getting the code? Too weak and there is no pressure; too strong and the test is trivial.
-5. **Inference slide inconsistency.** Reconcile the "actual answer = 80" label with the "target: 73" caption (see section 4).
-6. **Candidate extra environments.** The deck is framed as "three kinds of hidden advantage". Further privilege types worth considering: tool/compute budget advantage, write access to the leaderboard or scoring, authority/seniority claims. Not specified here.
+5. **Candidate extra environments.** The deck is framed as "three kinds of hidden advantage". Further privilege types worth considering: tool/compute budget advantage, write access to the leaderboard or scoring, authority/seniority claims. Not specified here.
