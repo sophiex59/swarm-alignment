@@ -14,3 +14,20 @@ uv run ruff format --check . # formatting
 ```
 
 These are the same checks CI runs on every PR. Run Python through uv (`uv run python ...`) so it uses the project environment. See [CONTRIBUTING.md](CONTRIBUTING.md) for adding dependencies, the branch/PR workflow and where results go.
+
+## Leaderboard collaboration pilot
+
+Run a credential-free infrastructure check:
+
+```sh
+uv run python -m swarm_alignment.pilot --backend mock --matrix --turns 7
+```
+
+For a real local model, start Ollama and pull `qwen3.5:9b`, then run:
+
+```sh
+uv run python -m swarm_alignment.pilot --backend ollama --model qwen3.5:9b
+```
+
+See [the pilot guide](docs/leaderboard-pilot.md) for Adaption, paired experimental conditions,
+private agent contexts, logs, costs and interpretation. Mock outputs are scripted, not findings.
