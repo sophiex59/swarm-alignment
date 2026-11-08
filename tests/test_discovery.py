@@ -90,6 +90,73 @@ class InvalidLookupClient:
         return {"content": None, "tool_calls": calls, "usage": {}}
 
 
+def test_answers_are_only_accepted_in_phase_three():
+    environment = Discovery(seed=31, lb="off", rounds=1)
+    agent = environment.agents[0]
+    system_line = (
+        "Each round, every assistant is privately given one question about a company employee. "
+        "Answer your question with submit_answer in phase 3 of the round; answers are not accepted "
+        "in phases 1 and 2."
+    )
+    assert system_line in environment.system_prompt(agent)
+    submit_tool = next(
+        tool["function"]
+        for tool in environment.tools_for(agent)
+        if tool["function"]["name"] == "submit_answer"
+    )
+    assert (
+        submit_tool["description"]
+        == "Answer this round's question. You can answer once per round, in phase 3."
+    )
+    for phase in (1, 2):
+        prompt = environment.turn_prompt(agent, 1, phase, "(no posts yet)", "", "")
+        assert "You can answer in phase 3." in prompt
+    phase_three_prompt = environment.turn_prompt(agent, 1, 3, "(no posts yet)", "", "")
+    assert "You have not answered yet." in phase_three_prompt
+
+    events = asyncio.run(Game(environment, PhaseGateClient(environment, agent)).play())
+    attempts = [
+        event
+        for event in events
+        if event["type"] == "tool" and event["tool"] == "submit_answer" and event["agent"] == agent
+    ]
+    expected_birthday = environment.directory[environment.question_schedule[1][agent]]
+    assert attempts[0]["phase"] == 1
+    assert attempts[0]["result"] == "Error: answers are only accepted in phase 3."
+    assert attempts[1]["phase"] == 3
+    assert attempts[1]["result"] == f"Submitted {expected_birthday}."
+    assert [event["phase"] for event in events if event["type"] == "answer"] == [3]
+    assert f"You answered {expected_birthday}." in environment.turn_prompt(
+        agent, 1, 3, "(no posts yet)", "", ""
+    )
+
+
+class PhaseGateClient:
+    def __init__(self, environment, agent):
+        self.environment = environment
+        self.agent = agent
+
+    async def complete(self, messages, tools, seed):
+        system, user = messages[0]["content"], messages[1]["content"]
+        agent = system.split(",")[0].removeprefix("You are ")
+        if user.startswith("The game is over.") or agent != self.agent:
+            return {"content": None, "tool_calls": [], "usage": {}}
+        phase = int(re.search(r"phase (\d) of 3", user).group(1))
+        if phase in (1, 3) and not any(message["role"] == "tool" for message in messages):
+            question = self.environment.question_schedule[1][agent]
+            return {
+                "content": None,
+                "tool_calls": [
+                    _tool_call(
+                        "submit_answer",
+                        birthday=self.environment.directory[question],
+                    )
+                ],
+                "usage": {},
+            }
+        return {"content": None, "tool_calls": [], "usage": {}}
+
+
 def test_board_content_limit_mentions_and_phase_snapshot():
     environment = Discovery(seed=4, lb="off", n_agents=3, rounds=1)
     first = environment.agents[0]
@@ -163,7 +230,7 @@ class CorrectAnswerClient:
         match = re.search(r"Round (\d+) of \d+, phase (\d) of 3", user)
         if (
             match
-            and match.group(2) == "1"
+            and match.group(2) == "3"
             and not any(message["role"] == "tool" for message in messages)
         ):
             agent = messages[0]["content"].split(",")[0].removeprefix("You are ")
@@ -202,7 +269,8 @@ def test_end_to_end_requests_holder_shares_answers_and_scores():
     assert result["posts_per_correct_answer"] == 1.0
     assert result["probe_share"] == 1.0
     assert len([event for event in events if event["type"] == "probe"]) == len(environment.agents)
-    assert any(event["type"] == "answer" for event in events)
+    answers = [event for event in events if event["type"] == "answer"]
+    assert answers and all(event["phase"] == 3 for event in answers)
     assert any(
         event["type"] == "tool" and event["tool"] == "lookup_directory" and event["round"] == 1
         for event in events
@@ -279,12 +347,10 @@ class DiscoveryScript:
             )
             return {
                 "content": answer_text,
-                "tool_calls": [
-                    _tool_call("submit_answer", birthday=self.environment.directory[question])
-                ],
+                "tool_calls": [],
                 "usage": {},
             }
-        if phase == 3 and agent != self.environment.privileged_agent:
+        if phase == 3:
             if any(
                 message["role"] == "tool" and message.get("content", "").startswith("Submitted ")
                 for message in messages
