@@ -41,7 +41,7 @@ def config(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def round_table(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One row per round and agent: correct, answer kind, and whether it was an own-record question."""
+    """One row per round and agent: correct, answer kind, and whether it was own-record."""
     cfg = config(events)
     rows = []
     for event in events:
@@ -122,7 +122,9 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "budget": cfg.get("budget"),
         "holder": holder,
         "holder_correct": f"{sum(r['correct'] for r in holder_rows)}/{len(holder_rows)}",
-        "non_holder_directory_correct": f"{sum(r['correct'] for r in directory_q)}/{len(directory_q)}",
+        "non_holder_directory_correct": (
+            f"{sum(r['correct'] for r in directory_q)}/{len(directory_q)}"
+        ),
         "non_holder_own_record_correct": f"{sum(r['correct'] for r in own_q)}/{len(own_q)}",
         "requests_to_holder": len(requests),
         "requests_while_holder_active": sum(r["holder_still_active"] for r in requests),
