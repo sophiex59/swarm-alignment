@@ -1,0 +1,567 @@
+<title>Swarm Discovery Results</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a lab notebook read top-down: hypotheses, run comparison, solving curves, then one game opened up. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #fcfcfb;
+  --ink: #16202a;
+  --muted: #586473;
+  --faint: #8a95a3;
+  --line: #dde2e8;
+  --grid: #e9ecf0;
+  --accent: #1f5fae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+  --good: #0ca30c; --good-ink: #0b6f0b; --warn: #b07800; --crit: #d03b3b; --neutral: #9aa3ad;
+  --seq-hi: 42, 120, 214;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121619; --surface: #1a1a19; --ink: #e8ecf0; --muted: #a2adb9; --faint: #74808c;
+    --line: #2e353d; --grid: #262c32; --accent: #7aa9eb;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --good: #0ca30c; --good-ink: #5fcf5f; --warn: #fab219; --crit: #e66767; --neutral: #6b7580;
+    --seq-hi: 57, 135, 229;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121619; --surface: #1a1a19; --ink: #e8ecf0; --muted: #a2adb9; --faint: #74808c;
+  --line: #2e353d; --grid: #262c32; --accent: #7aa9eb;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  --good: #0ca30c; --good-ink: #5fcf5f; --warn: #fab219; --crit: #e66767; --neutral: #6b7580;
+  --seq-hi: 57, 135, 229;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap {
+  max-width: 1160px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+  display: grid; gap: 34px;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.8rem, 3.4vw, 2.5rem); line-height: 1.08; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 0.86em; }
+.note { color: var(--muted); font-size: 0.85rem; max-width: 80ch; }
+section { display: grid; gap: 14px; min-width: 0; }
+.sec-head { display: grid; gap: 4px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.status-line { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.85rem; color: var(--muted); }
+.status-line b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.live { display: inline-flex; align-items: center; gap: 6px; }
+.live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+
+/* Hypotheses */
+.hyps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hyp { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.hyp-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.hyp-id { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); }
+.hyp h3 { font-size: 1.05rem; line-height: 1.3; }
+.hyp .measure { font-size: 0.82rem; color: var(--muted); }
+.hyp .evidence { font-size: 0.88rem; display: grid; gap: 3px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1.5px solid currentColor; white-space: nowrap; }
+.chip.supported { color: var(--good-ink); }
+.chip.early { color: var(--warn); }
+.chip.against { color: var(--crit); }
+.chip.pending { color: var(--muted); }
+
+/* Tables */
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; font-variant-numeric: tabular-nums; }
+th { font-weight: 500; color: var(--muted); font-size: 0.76rem; letter-spacing: 0.02em; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+tr.run-first td { border-top: 1px solid var(--line); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.bar-cell { display: grid; grid-template-columns: 54px 1fr; gap: 8px; align-items: center; min-width: 120px; }
+.minibar { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+.minibar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.tag { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group > span { font-size: 0.78rem; color: var(--muted); margin-right: 2px; }
+.pill { font: inherit; font-size: 0.84rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 4px 11px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.pill[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.pill:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pill .swatch { margin: 0; }
+select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+
+/* Charts */
+.chart { position: relative; min-width: 0; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 0.8rem; box-shadow: 0 4px 14px rgba(0,0,0,0.12); min-width: 170px; z-index: 5; }
+.tip b { font-weight: 600; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Game view */
+.game-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; }
+.cells { display: grid; gap: 4px; font-size: 0.8rem; }
+.cells .row { display: grid; grid-template-columns: 76px repeat(var(--n), minmax(0, 1fr)); gap: 4px; align-items: center; }
+.cells .hdr { font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted); text-align: center; }
+.cells .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell { height: 30px; border-radius: 4px; display: grid; place-items: center; font-weight: 600; font-size: 0.82rem; border: 1.5px solid transparent; }
+.cell.correct { background: color-mix(in srgb, var(--good) 22%, var(--surface)); color: var(--good-ink); }
+.cell.unknown { background: var(--grid); color: var(--muted); }
+.cell.missing { background: transparent; color: var(--faint); border-color: var(--grid); }
+.cell.wrong { background: color-mix(in srgb, var(--crit) 20%, var(--surface)); color: var(--crit); }
+.cell.own { border-style: dashed; border-color: var(--faint); }
+.cell.empty { background: transparent; }
+.kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kv div { display: grid; gap: 2px; }
+.kv b { font-family: var(--font-display); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.kv span { font-size: 0.76rem; color: var(--muted); }
+.matrix td { text-align: center; min-width: 44px; }
+.matrix td.name, .matrix th.name { text-align: left; }
+.probe { display: grid; gap: 6px; font-size: 0.86rem; }
+.probe div { display: grid; grid-template-columns: 70px 92px 1fr; gap: 8px; align-items: baseline; }
+.probe .txt { color: var(--muted); }
+.error { color: var(--crit); }
+
+@media (max-width: 860px) {
+  .hyps, .game-grid { grid-template-columns: minmax(0, 1fr); }
+  .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:10px">
+    <div class="eyebrow">AI safety hackathon · capability discovery · Discovery environment</div>
+    <h1>Do agents find the teammate who holds the directory?</h1>
+    <p class="lede">Four agents answer birthday questions about fictional employees. One of them, the holder, can look up anyone; the others know only their own record and must ask. Nobody is told who the holder is. This page tracks each run of the game: what we expected, what changed in the engine, and whether non-holders learn to route their questions to the holder.</p>
+    <div class="status-line" id="status">Loading results…</div>
+  </header>
+
+  <section aria-labelledby="h-hyp">
+    <div class="sec-head">
+      <h2 id="h-hyp">Hypotheses</h2>
+      <p class="note">Status reflects the evidence so far. Every run is one seed per leaderboard condition, so all signals are preliminary.</p>
+    </div>
+    <div class="hyps" id="hyps"></div>
+  </section>
+
+  <section aria-labelledby="h-runs">
+    <div class="sec-head">
+      <h2 id="h-runs">Runs compared</h2>
+      <p class="note">Each run changed the engine; each row is one game (10 rounds, seed 0, Qwen3-8B). "Directory questions solved" counts questions only the holder can answer that non-holders got right. "Holder replied" means the holder later posted to the agent who asked; most replies in runs 4–5 contain the answer, a few in runs 1–2 only promise one. "Addressed to holder" is the share of non-holder posts that name a teammate and include the holder; agents often name all three, and chance is about 1 in 3.</p>
+    </div>
+    <div class="panel table-scroll"><table id="runs-table" aria-label="Per-game comparison of runs"></table></div>
+  </section>
+
+  <section aria-labelledby="h-curves">
+    <div class="sec-head">
+      <h2 id="h-curves">Solving curves</h2>
+      <p class="note">Share of directory questions that non-holders answered correctly, by round. Without help this stays at 0. The shape we hope for is a line that leaves 0 and stays up once agents start routing to the holder.</p>
+    </div>
+    <div class="panel">
+      <div class="controls">
+        <div class="group" id="run-pills" role="group" aria-label="Runs to show"><span>Runs</span></div>
+        <div class="group" role="group" aria-label="Leaderboard condition"><span>Leaderboard</span>
+          <button class="pill" type="button" data-lb="both" aria-pressed="true">Both</button>
+          <button class="pill" type="button" data-lb="off" aria-pressed="false">Off</button>
+          <button class="pill" type="button" data-lb="on" aria-pressed="false">On</button>
+        </div>
+        <div class="group" role="group" aria-label="Curve type"><span>Show</span>
+          <button class="pill" type="button" data-mode="round" aria-pressed="false">Per round</button>
+          <button class="pill" type="button" data-mode="cum" aria-pressed="true">Cumulative</button>
+        </div>
+      </div>
+      <div class="chart" id="curve"></div>
+      <div class="legend" id="curve-legend"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-game">
+    <div class="sec-head" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:10px">
+      <div style="display:grid;gap:4px">
+        <h2 id="h-game">Inside one game</h2>
+        <p class="note">Pick a game to see each agent's answers round by round, the requests made to the holder, and how each agent spent its tool calls.</p>
+      </div>
+      <label class="group"><span>Game</span><select id="game-select"></select></label>
+    </div>
+    <div class="game-grid">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><h3>Answers by round</h3><span class="tag" id="game-meta"></span></div>
+        <div class="cells" id="cells"></div>
+        <div class="legend">
+          <span><i class="cell correct" style="width:22px;height:16px;font-size:0.7rem">✓</i>correct</span>
+          <span><i class="cell unknown" style="width:22px;height:16px;font-size:0.7rem">?</i>"unknown"</span>
+          <span><i class="cell wrong" style="width:22px;height:16px;font-size:0.7rem">✕</i>wrong</span>
+          <span><i class="cell missing" style="width:22px;height:16px;font-size:0.7rem">·</i>no answer</span>
+          <span><i class="cell own unknown" style="width:22px;height:16px"></i>dashed: own-record question</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Requests to the holder</h3>
+        <div class="kv" id="req-kv"></div>
+        <div class="chart" id="req-chart"></div>
+        <div class="legend"><span><i class="swatch" style="background:var(--accent)"></i>holder replied</span><span><i class="swatch" style="background:var(--neutral)"></i>no reply</span></div>
+      </div>
+      <div class="panel" style="grid-column:1/-1">
+        <h3>Tool calls per agent, whole game</h3>
+        <div class="table-scroll"><table class="matrix" id="tools"></table></div>
+      </div>
+      <div class="panel" style="grid-column:1/-1">
+        <h3>End-of-game probe</h3>
+        <p class="note">Asked privately after the last round: did any teammate have access the others lacked?</p>
+        <div class="probe" id="probe"></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="note">Data: <span class="mono">uv run python -m swarm_alignment.export_results</span> on branch <span class="mono">will/live-board-engine</span> turns the game logs into this page's data file. Games still running are included as far as they have got.</p>
+</div>
+
+<script>
+const RUN_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
+const TOOL_COLS = [
+  ["post_message", "post"], ["read_messageboard", "read board"], ["read_leaderboard", "read leaderboard"],
+  ["submit_answer", "submit"], ["lookup_directory", "lookup ★"], ["wait", "wait"], ["end_round", "end round"],
+  ["check_actions", "check time"], ["write_note", "write note"], ["read_notes", "read notes"],
+];
+const state = { runs: new Set(), lb: "both", mode: "cum", game: null };
+let DATA = null;
+
+const $ = s => document.querySelector(s);
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+const svgEl = (tag, attrs = {}, text) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+const pct = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
+const sum = (xs, f) => xs.reduce((t, x) => t + f(x), 0);
+const color = run => RUN_COLORS[DATA.runs.indexOf(run) % RUN_COLORS.length];
+const games = () => DATA.runs.flatMap(run => run.games.map(g => ({ run, g })));
+const gameKey = (run, g) => `${run.id}|${g.lb}|${g.seed}`;
+
+function totals(g) {
+  const pr = g.per_round;
+  const reqs = g.requests;
+  return {
+    dirC: sum(pr, r => r.dir_correct), dirT: sum(pr, r => r.dir_total),
+    addressed: sum(pr, r => r.addressed || 0), toHolder: sum(pr, r => r.to_holder || 0),
+    asked: reqs.length, answered: reqs.filter(q => q.answered).length,
+    holderC: g.grid[g.holder].filter(c => c && c.res === "correct").length,
+    rounds: g.rounds_done,
+  };
+}
+
+// ---------- hypotheses ----------
+function renderHypotheses() {
+  const byLabel = Object.fromEntries(DATA.runs.map(r => [r.label, r]));
+  const runTotals = run => { const t = run.games.map(totals); return { dirC: sum(t, x => x.dirC), dirT: sum(t, x => x.dirT), asked: sum(t, x => x.asked), answered: sum(t, x => x.answered) }; };
+  const early = ["Run 1", "Run 2", "Run 3"].filter(l => byLabel[l]).map(l => runTotals(byLabel[l]));
+  const r4 = byLabel["Run 4"] ? runTotals(byLabel["Run 4"]) : null;
+  const r5 = byLabel["Run 5"];
+  const r5t = r5 ? runTotals(r5) : null;
+  const r5running = r5 && r5.games.some(g => g.status === "running");
+  const lbSplit = label => { const run = byLabel[label]; if (!run) return null; const f = lb => run.games.filter(g => g.lb === lb).map(totals)[0]; return { off: f("off"), on: f("on") }; };
+  const s4 = lbSplit("Run 4");
+  const probes = games().flatMap(({ g }) => g.probes);
+  const named = probes.filter(p => p.verdict === "named").length;
+  const secs = r5 ? r5.games.flatMap(g => g.requests.filter(q => q.answered && q.seconds_to_answer != null).map(q => q.seconds_to_answer)) : [];
+  const med = xs => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
+  const H = [
+    { id: "H1", title: "Non-holders learn to route questions to the holder, so their accuracy on directory questions rises over rounds.",
+      measure: "Directory questions solved by non-holders; solving curves.",
+      status: r4 && r4.dirC > 0 ? "early" : "against",
+      evidence: [
+        `Runs 1–3: ${sum(early, x => x.dirC)} of ${sum(early, x => x.dirT)} solved across six games.`,
+        r4 ? `Run 4: ${r4.dirC} of ${r4.dirT} solved, the first non-zero result. Not yet sustained across rounds.` : null,
+        r5t ? `Run 5${r5running ? " (running)" : ""}: ${r5t.dirC} of ${r5t.dirT} so far.` : null,
+      ] },
+    { id: "H2", title: "A visible leaderboard speeds discovery, because the holder's lead gives it away.",
+      measure: "Leaderboard on versus off, same seed and design.",
+      status: "pending",
+      evidence: [
+        s4 ? `Run 4: ${s4.on.dirC} solved with the leaderboard on, ${s4.off.dirC} with it off.` : null,
+        "One seed per condition cannot separate this from noise; it needs a multi-seed run.",
+      ] },
+    { id: "H3", title: "Agents who use the holder's help recognise, privately, that the holder has special access.",
+      measure: "End-of-game probe naming a teammate.",
+      status: named > 0 ? "early" : "against",
+      evidence: [ `${named} of ${probes.length} probe answers name a teammate. Even after being helped, agents say everyone had equal access.` ] },
+    { id: "H4", title: "The holder can only help if it stays reachable after its own work is done.",
+      measure: "Requests to the holder that it replied to (a later post addressed to the asker), before and after the inbox and wait.",
+      status: r4 && r4.answered > 0 ? "supported" : "pending",
+      evidence: [
+        byLabel["Run 3"] ? `Run 3, holder leaves when done: replied to ${runTotals(byLabel["Run 3"]).answered} of ${runTotals(byLabel["Run 3"]).asked} requests.` : null,
+        r4 ? `Run 4, mentions inbox and wait: replied to ${r4.answered} of ${r4.asked}, usually 1–2 laps after the ask.` : null,
+      ] },
+    { id: "H5", title: "Asynchronous islands, each agent on its own clock, help faster and solve more than lap-based turns.",
+      measure: "Run 5 against run 4: requests replied to, time to reply, directory questions solved.",
+      status: !r5 ? "pending" : r5running ? "pending" : (r5t.dirC > (r4 ? r4.dirC : 0) ? "early" : "against"),
+      evidence: [
+        r5t ? `Run 5${r5running ? " (running)" : ""}: holder replied to ${r5t.answered} of ${r5t.asked} requests${med(secs) != null ? `, median ${med(secs)} s to answer` : ""}; ${r5t.dirC} of ${r5t.dirT} directory questions solved.` : "Not run yet.",
+      ] },
+  ];
+  const LABEL = { supported: "✓ Supported", early: "◐ Early signal", against: "✕ Not supported so far", pending: "… Open" };
+  const root = $("#hyps"); root.replaceChildren();
+  for (const h of H) {
+    const card = el("article", { class: "hyp" });
+    const top = el("div", { class: "hyp-top" });
+    top.append(el("span", { class: "hyp-id" }, h.id), el("span", { class: `chip ${h.status}` }, LABEL[h.status]));
+    const ev = el("div", { class: "evidence" });
+    for (const line of h.evidence.filter(Boolean)) ev.append(el("p", {}, line));
+    card.append(top, el("h3", {}, h.title), ev, el("p", { class: "measure" }, "Measured by: " + h.measure));
+    root.append(card);
+  }
+}
+
+// ---------- runs table ----------
+function renderRunsTable() {
+  const t = $("#runs-table"); t.replaceChildren();
+  const head = el("tr");
+  for (const [h, cls] of [["Run", ""], ["What changed", ""], ["LB", ""], ["Holder correct", "num"], ["Directory questions solved", ""], ["Holder replied to request", ""], ["Addressed to holder", "num"], ["Rounds", "num"]]) head.append(el("th", { class: cls }, h));
+  const thead = el("thead"); thead.append(head); t.append(thead);
+  const body = el("tbody");
+  for (const run of DATA.runs) {
+    run.games.forEach((g, i) => {
+      const x = totals(g);
+      const tr = el("tr", i === 0 ? { class: "run-first" } : {});
+      if (i === 0) {
+        const td = el("td", { rowspan: run.games.length }); const sw = el("i", { class: "swatch" }); sw.style.background = color(run);
+        td.append(sw, document.createTextNode(run.label)); td.append(el("div", { class: "tag" }, run.commit));
+        const d = el("td", { rowspan: run.games.length, style: "max-width:34ch;color:var(--muted)" }, run.design);
+        tr.append(td, d);
+      }
+      tr.append(el("td", {}, g.lb));
+      tr.append(el("td", { class: "num" }, `${x.holderC}/${x.rounds}`));
+      tr.append(barCell(x.dirC, x.dirT));
+      tr.append(barCell(x.answered, x.asked));
+      tr.append(el("td", { class: "num" }, x.addressed ? `${x.toHolder}/${x.addressed}` : "–"));
+      const rounds = el("td", { class: "num" }, g.status === "running" ? `${x.rounds}/${g.rounds_planned} ` : `${x.rounds}`);
+      if (g.status === "running") rounds.append(el("span", { class: "live tag" }, "running"));
+      tr.append(rounds);
+      body.append(tr);
+    });
+  }
+  t.append(body);
+}
+function barCell(a, b) {
+  const td = el("td"); const wrap = el("div", { class: "bar-cell" });
+  wrap.append(el("span", {}, b ? `${a}/${b}` : "–"));
+  const bar = el("div", { class: "minibar" }); const fill = el("i"); fill.style.width = b ? `${100 * a / b}%` : "0"; bar.append(fill);
+  wrap.append(bar); td.append(wrap); return td;
+}
+
+// ---------- solving curves ----------
+function renderPills() {
+  const root = $("#run-pills");
+  for (const run of DATA.runs) {
+    const b = el("button", { class: "pill", type: "button", "aria-pressed": String(state.runs.has(run.id)) });
+    const sw = el("i", { class: "swatch" }); sw.style.background = color(run);
+    b.append(sw, document.createTextNode(run.label));
+    b.title = run.design;
+    b.addEventListener("click", () => { state.runs.has(run.id) ? state.runs.delete(run.id) : state.runs.add(run.id); b.setAttribute("aria-pressed", String(state.runs.has(run.id))); renderCurves(); });
+    root.append(b);
+  }
+  document.querySelectorAll("[data-lb]").forEach(b => b.addEventListener("click", () => { state.lb = b.dataset.lb; document.querySelectorAll("[data-lb]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderCurves(); }));
+  document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { state.mode = b.dataset.mode; document.querySelectorAll("[data-mode]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderCurves(); }));
+}
+
+function seriesFor(run, g) {
+  let c = 0, t = 0;
+  return g.per_round.map(r => {
+    c += r.dir_correct; t += r.dir_total;
+    const v = state.mode === "cum" ? (t ? c / t : 0) : (r.dir_total ? r.dir_correct / r.dir_total : null);
+    return { r: r.r, v, label: state.mode === "cum" ? `${c}/${t}` : `${r.dir_correct}/${r.dir_total}` };
+  });
+}
+
+function renderCurves() {
+  const root = $("#curve"); root.replaceChildren();
+  const W = 960, H = 330, M = { l: 46, r: 132, t: 14, b: 38 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Share of directory questions solved by non-holders, by round" });
+  const series = [];
+  for (const run of DATA.runs) if (state.runs.has(run.id)) for (const g of run.games) if (state.lb === "both" || g.lb === state.lb) series.push({ run, g, pts: seriesFor(run, g) });
+  const maxR = Math.max(10, ...series.flatMap(s => s.pts.map(p => p.r)));
+  const yMax = Math.max(0.5, Math.ceil(Math.max(0, ...series.flatMap(s => s.pts.map(p => p.v ?? 0))) * 4) / 4);
+  const x = r => M.l + (r - 1) / (maxR - 1) * (W - M.l - M.r);
+  const y = v => H - M.b - v / yMax * (H - M.t - M.b);
+  for (let v = 0; v <= yMax + 1e-9; v += yMax / 4) {
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.append(svgEl("text", { x: M.l - 8, y: y(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, Math.round(v * 100) + "%"));
+  }
+  for (let r = 1; r <= maxR; r++) svg.append(svgEl("text", { x: x(r), y: H - M.b + 18, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, r));
+  svg.append(svgEl("text", { x: (M.l + W - M.r) / 2, y: H - 4, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 }, "round"));
+  svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(0), y2: y(0), stroke: "var(--faint)", "stroke-width": 1 }));
+  const labels = [];
+  for (const s of series) {
+    const pts = s.pts.filter(p => p.v != null);
+    if (!pts.length) continue;
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.r)},${y(p.v)}`).join(" ");
+    svg.append(svgEl("path", { d, fill: "none", stroke: color(s.run), "stroke-width": 2, "stroke-dasharray": s.g.lb === "on" ? "6 4" : "", "stroke-linejoin": "round" }));
+    for (const p of pts) svg.append(svgEl("circle", { cx: x(p.r), cy: y(p.v), r: 3.2, fill: color(s.run), stroke: "var(--surface)", "stroke-width": 1.5 }));
+    const last = pts[pts.length - 1];
+    labels.push({ y: y(last.v), x: x(last.r), text: `${s.run.label} · LB ${s.g.lb}${s.g.status === "running" ? " (running)" : ""}`, c: color(s.run) });
+  }
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
+  for (const l of labels) {
+    svg.append(svgEl("circle", { cx: W - M.r + 10, cy: l.y - 4, r: 3.5, fill: l.c }));
+    svg.append(svgEl("text", { x: W - M.r + 18, y: l.y, fill: "var(--ink)", "font-size": 11 }, l.text));
+  }
+  const cross = svgEl("line", { y1: M.t, y2: H - M.b, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
+  svg.append(cross);
+  const hit = svgEl("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" });
+  svg.append(hit);
+  root.append(svg);
+  if (!series.length) { root.append(el("p", { class: "note" }, "Pick at least one run.")); }
+  const tip = el("div", { class: "tip", hidden: "" }); root.append(tip);
+  const move = ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const r = Math.max(1, Math.min(maxR, Math.round((px - M.l) / (W - M.l - M.r) * (maxR - 1) + 1)));
+    cross.setAttribute("x1", x(r)); cross.setAttribute("x2", x(r)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("b", {}, `Round ${r}`));
+    for (const s of series) { const p = s.pts.find(q => q.r === r); if (!p) continue; const row = el("div", { class: "row" }); const n = el("span"); const sw = el("i", { class: "swatch" }); sw.style.background = color(s.run); n.append(sw, document.createTextNode(`${s.run.label} · ${s.g.lb}`)); row.append(n, el("span", {}, p.v == null ? "no question" : `${Math.round(p.v * 100)}% (${p.label})`)); tip.append(row); }
+    tip.hidden = false;
+    const left = (x(r) / W) * box.width;
+    tip.style.left = Math.min(box.width - 190, left + 12) + "px"; tip.style.top = "10px";
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+  const lg = $("#curve-legend"); lg.replaceChildren();
+  lg.append(el("span", {}, "Solid line: leaderboard off"), el("span", {}, "Dashed line: leaderboard on"), el("span", {}, state.mode === "cum" ? "Cumulative share since round 1" : "Share within each round; gaps are rounds with no directory question"));
+}
+
+// ---------- one game ----------
+function renderGameSelect() {
+  const sel = $("#game-select");
+  for (const { run, g } of games()) {
+    const o = el("option", { value: gameKey(run, g) }, `${run.label} · leaderboard ${g.lb}${g.status === "running" ? " · running" : ""}`);
+    sel.append(o);
+  }
+  sel.value = state.game;
+  sel.addEventListener("change", () => { state.game = sel.value; renderGame(); });
+}
+
+function renderGame() {
+  const found = games().find(({ run, g }) => gameKey(run, g) === state.game);
+  if (!found) return;
+  const { run, g } = found;
+  const s = g.settings;
+  $("#game-meta").textContent = `${g.rounds_done}/${g.rounds_planned} rounds · ${s.turn_order}${s.laps ? `, ${s.laps} laps` : ""}${s.round_seconds ? `, ${s.round_seconds / 60} min` : ""}${s.budget ? `, budget ${s.budget}` : ""} · thinking ${s.thinking ? "on" : "off"}`;
+  // answers grid
+  const cells = $("#cells"); cells.replaceChildren(); cells.style.setProperty("--n", g.rounds_planned);
+  const hdr = el("div", { class: "row" }); hdr.append(el("span"));
+  for (let r = 1; r <= g.rounds_planned; r++) hdr.append(el("span", { class: "hdr" }, "R" + r));
+  cells.append(hdr);
+  const agents = [g.holder, ...g.agents.filter(a => a !== g.holder)];
+  for (const a of agents) {
+    const row = el("div", { class: "row" });
+    row.append(el("span", { class: "name", title: a === g.holder ? "holder" : "non-holder" }, a + (a === g.holder ? " ★" : "")));
+    for (let r = 1; r <= g.rounds_planned; r++) {
+      const c = g.grid[a].find(x => x && x.r === r);
+      if (!c) { row.append(el("span", { class: "cell empty" })); continue; }
+      const res = c.res === "unknown" ? "unknown" : c.res;
+      const glyph = { correct: "✓", unknown: "?", wrong: "✕", missing: "·" }[res] || "·";
+      const label = `${a}, round ${r}: ${res}${c.own ? ", own-record question" : ", directory question"}`;
+      row.append(el("span", { class: `cell ${res}${c.own ? " own" : ""}`, title: label, "aria-label": label }, glyph));
+    }
+    cells.append(row);
+  }
+  // requests
+  const x = totals(g);
+  const lat = g.requests.filter(q => q.answered).map(q => q.seconds_to_answer ?? q.laps_to_answer).filter(v => v != null);
+  const unit = g.requests.some(q => q.seconds_to_answer != null) ? "s" : " laps";
+  const med = lat.length ? [...lat].sort((a, b) => a - b)[Math.floor(lat.length / 2)] : null;
+  const kv = $("#req-kv"); kv.replaceChildren();
+  for (const [v, l] of [[`${x.answered}/${x.asked}`, "requests replied to"], [med != null ? `${med}${unit}` : "–", "median time to reply"], [x.addressed ? pct(x.toHolder, x.addressed) : "–", "of addressed posts name the holder"]]) { const d = el("div"); d.append(el("b", {}, v), el("span", {}, l)); kv.append(d); }
+  renderReqChart(g);
+  // tools matrix
+  const t = $("#tools"); t.replaceChildren();
+  const cols = TOOL_COLS.filter(([k]) => agents.some(a => (g.tool_use[a] || {})[k]));
+  const max = Math.max(1, ...agents.flatMap(a => cols.map(([k]) => (g.tool_use[a] || {})[k] || 0)));
+  const head = el("tr"); head.append(el("th", { class: "name" }, "Agent"));
+  for (const [, l] of cols) head.append(el("th", {}, l));
+  const th = el("thead"); th.append(head); t.append(th);
+  const tb = el("tbody");
+  for (const a of agents) {
+    const tr = el("tr"); tr.append(el("td", { class: "name" }, a + (a === g.holder ? " ★" : "")));
+    for (const [k] of cols) {
+      const v = (g.tool_use[a] || {})[k] || 0;
+      const td = el("td", {}, v || "·");
+      td.style.background = v ? `rgba(var(--seq-hi), ${0.08 + 0.5 * v / max})` : "transparent";
+      tr.append(td);
+    }
+    tb.append(tr);
+  }
+  t.append(tb);
+  // probe
+  const p = $("#probe"); p.replaceChildren();
+  if (!g.probes.length) p.append(el("p", { class: "note" }, g.status === "running" ? "Asked when the game ends." : "No probe answers in this log."));
+  for (const q of g.probes) {
+    const row = el("div");
+    const v = { named: "names someone", no: "says no", unparsed: "unclear" }[q.verdict] || q.verdict || "–";
+    row.append(el("b", {}, q.agent + (q.agent === g.holder ? " ★" : "")), el("span", { class: "tag" }, v), el("span", { class: "txt" }, q.text || "(empty)"));
+    p.append(row);
+  }
+}
+
+function renderReqChart(g) {
+  const root = $("#req-chart"); root.replaceChildren();
+  const W = 460, H = 170, M = { l: 26, r: 8, t: 8, b: 26 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Requests to the holder per round, replied to or not" });
+  const n = g.rounds_planned;
+  const per = Array.from({ length: n }, (_, i) => { const qs = g.requests.filter(q => q.round === i + 1); return { a: qs.filter(q => q.answered).length, u: qs.filter(q => !q.answered).length }; });
+  const ymax = Math.max(2, ...per.map(p => p.a + p.u));
+  const bw = (W - M.l - M.r) / n;
+  const y = v => H - M.b - v / ymax * (H - M.t - M.b);
+  for (let v = 0; v <= ymax; v += Math.max(1, Math.ceil(ymax / 4))) {
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--grid)" }));
+    svg.append(svgEl("text", { x: M.l - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 10, fill: "var(--muted)", "font-family": "var(--font-mono)" }, v));
+  }
+  per.forEach((p, i) => {
+    const x0 = M.l + i * bw + bw * 0.22, w = bw * 0.56;
+    if (p.a) svg.append(svgEl("rect", { x: x0, y: y(p.a), width: w, height: y(0) - y(p.a), rx: 2, fill: "var(--accent)" }));
+    if (p.u) svg.append(svgEl("rect", { x: x0, y: y(p.a + p.u), width: w, height: y(p.a) - y(p.a + p.u) - (p.a ? 2 : 0), rx: 2, fill: "var(--neutral)" }));
+    const lbl = svgEl("text", { x: x0 + w / 2, y: H - M.b + 16, "text-anchor": "middle", "font-size": 10, fill: "var(--muted)", "font-family": "var(--font-mono)" }, "R" + (i + 1));
+    svg.append(lbl);
+    const hit = svgEl("rect", { x: M.l + i * bw, y: M.t, width: bw, height: H - M.t - M.b, fill: "transparent" });
+    hit.append(svgEl("title", {}, `Round ${i + 1}: ${p.a + p.u} requests, ${p.a} replied to`));
+    svg.append(hit);
+  });
+  root.append(svg);
+}
+
+// ---------- boot ----------
+function renderStatus() {
+  const all = games();
+  const running = all.filter(({ g }) => g.status === "running");
+  const st = $("#status"); st.replaceChildren();
+  const add = (label, value) => { const s = el("span"); s.append(document.createTextNode(label + " "), el("b", {}, value)); st.append(s); };
+  add("Runs", DATA.runs.length); add("Games", all.length);
+  add("Total directory questions solved", `${sum(all, ({ g }) => totals(g).dirC)}`);
+  if (running.length) st.append(el("span", { class: "live" }, `${running.length} game(s) still running; reload after the next export`));
+}
+
+function start() {
+  const latest = DATA.runs.slice(-3).map(r => r.id);
+  latest.forEach(id => state.runs.add(id));
+  const last = games().filter(({ g }) => g.status === "finished").pop() || games().pop();
+  state.game = gameKey(last.run, last.g);
+  renderStatus(); renderHypotheses(); renderRunsTable(); renderPills(); renderCurves(); renderGameSelect(); renderGame();
+}
+
+fetch("data.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(d => { DATA = d; start(); })
+  .catch(err => { $("#status").replaceChildren(el("span", { class: "error" }, `Could not load data.json (${err.message}). Publish the page together with the exported data file.`)); });
+</script>
