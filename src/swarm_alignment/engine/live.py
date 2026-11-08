@@ -5,13 +5,11 @@ and an agent reads it with ``read_messageboard`` whenever it likes. Time is an a
 wall clock: every tool call costs actions, and a round ends when every agent has spent its budget
 or ended its round.
 
-Pacing: each agent runs on its own virtual clock. A model step takes simulated time proportional to
-the tokens it wrote, and the engine always runs whichever agent is due next. Chatty agents therefore
-act less often than terse ones, and agents drift out of lockstep. The clock comes from the model's
-output, not from real latency, so a game does not depend on how fast the server is.
+Pacing: there is no clock. Each agent has an action budget per round and nothing else limits it.
+Agents take one model step at a time in a per-round seeded order, so a later agent sees earlier
+agents' posts, and an agent that does too little in its budget simply scores less.
 """
 
-import heapq
 import json
 import random
 from typing import Any
@@ -23,14 +21,12 @@ from swarm_alignment.swarm import ChatClient, _tool
 
 DEFAULT_BUDGET = 30
 STEP_CAP_FACTOR = 2  # model steps per round, as a multiple of the budget; stops free-read loops
-STEP_SECONDS = 1.0  # virtual time every model step takes, before the writing time
-TOKENS_PER_SECOND = 20.0  # virtual writing speed
 MAX_CONTEXT_CHARS = 36_000  # about 10k tokens; the server's limit is 16k
 DEFAULT_READ_LIMIT = 40  # posts returned by read_messageboard when no limit is given
 RESULT_LINES = 20  # past round results shown at the start of a round
 NOTE_LINES = 25  # most recent lines of each kind of private note shown
 NOTE_LENGTH = 400
-FREE_ALWAYS = ("read_notes", "end_round")
+FREE_ALWAYS = ("read_notes", "end_round", "check_actions")
 
 
 class LiveGame(Game):
@@ -58,7 +54,6 @@ class LiveGame(Game):
         self.last_read = dict.fromkeys(environment.agents, 0)
         self.leaderboard_latest: str | None = None
         self.results_log: dict[str, list[str]] = {name: [] for name in environment.agents}
-        self.now = 0.0
 
     # ---- tools -------------------------------------------------------------------------------
 
@@ -97,6 +92,12 @@ class LiveGame(Game):
                 },
                 [],
             ),
+            _tool(
+                "check_actions",
+                "Check how many actions you have left this round. This is free.",
+                {},
+                [],
+            ),
             _tool("end_round", "End your round now. Unused actions are lost.", {}, []),
         ]
         if env.lb != "off":
@@ -119,29 +120,36 @@ class LiveGame(Game):
     def _tools_for(self, agent: str) -> list[dict[str, Any]]:
         return self._engine_tools(agent) + self.environment.tools_for(agent)
 
-    def _rules_text(self) -> str:
-        free = sorted(
-            {
-                tool
-                for tool in (
-                    "read_messageboard",
-                    "read_leaderboard",
-                    "read_notes",
-                    "end_round",
-                )
-                if self.cost(tool) == 0
-            }
+    def _cost_summary(self) -> str:
+        free = [
+            tool
+            for tool in (
+                "read_messageboard",
+                "read_leaderboard",
+                "read_notes",
+                "check_actions",
+                "end_round",
+            )
+            if self.cost(tool) == 0
+            and (tool != "read_leaderboard" or self.environment.lb != "off")
+            and (tool != "read_notes" or self.notes_enabled)
+        ]
+        return (
+            "Each tool call costs 1 action, and so does each message you post (post_message or "
+            "plain reply text). Free: " + (", ".join(free) or "nothing") + "."
         )
+
+    def _rules_text(self) -> str:
         lines = [
             "This is a live game. The team board is always current: read it whenever you like "
             "with read_messageboard. New posts never interrupt you; every tool result tells you "
             "how many board posts you have not read yet.",
-            f"Each round you have {self.budget} actions. Every tool call costs one action"
-            + (f", except {', '.join(free)}, which are free" if free else "")
-            + ". Writing a message, with post_message or as plain reply text, costs one action. "
-            "When your actions run out your round ends, and you can end it early with "
-            "end_round. Teammates have the same budget, so a request to a teammate "
-            "also uses their actions.",
+            f"ACTIONS. Each round you have {self.budget} actions, and nothing else limits you. "
+            f"{self._cost_summary()} A reply that makes three tool calls spends three actions. "
+            "Your round ends when your actions run out or you call end_round; unused actions are "
+            "lost, and anything you have not done by then is not done. Every tool result tells "
+            "you how many actions you have left, and check_actions tells you at any time. "
+            "Teammates have the same budget, so a request to a teammate also uses their actions.",
             "You can change your answer until the round ends; only your last answer counts.",
         ]
         if self.environment.lb != "off":
@@ -174,7 +182,6 @@ class LiveGame(Game):
             type="post",
             round=round_,
             tick=tick,
-            t=round(self.now, 2),
             agent=agent,
             text=full_text,
             stored_text=stored_text,
@@ -234,7 +241,13 @@ class LiveGame(Game):
     def _footer(self, agent: str, remaining: dict[str, int]) -> str:
         return f"\n[{remaining[agent]} actions left; {self._unread(agent)} unread board posts]"
 
-    def _run_tool(self, agent: str, name: str, args: dict[str, Any], round_: int, tick: int) -> str:
+    def _run_tool(
+        self, agent: str, name: str, args: dict[str, Any], round_: int, tick: int, left: int
+    ) -> str:
+        if name == "check_actions":
+            return (
+                f"You have {left} of {self.budget} actions left this round. {self._cost_summary()}"
+            )
         if name == "post_message":
             return self._live_post(agent, round_, tick, str(args.get("text", "")), "tool")
         if name == "read_messageboard":
@@ -264,12 +277,12 @@ class LiveGame(Game):
         messages: list[dict[str, Any]],
         remaining: dict[str, int],
         done: set[str],
-    ) -> float:
-        """Take one model step; return how much virtual time it took."""
+    ) -> None:
+        """Take one model step."""
         if sum(len(str(message.get("content") or "")) for message in messages) > MAX_CONTEXT_CHARS:
             self.log(type="context_cap", round=round_, tick=tick, agent=agent)
             done.add(agent)
-            return STEP_SECONDS
+            return
         tools = self._tools_for(agent)
         allowed = {tool["function"]["name"] for tool in tools}
         reply = await self.client.complete(
@@ -282,7 +295,6 @@ class LiveGame(Game):
             type="model_call",
             round=round_,
             tick=tick,
-            t=round(self.now, 2),
             agent=agent,
             content=content,
             tool_calls=calls,
@@ -345,7 +357,7 @@ class LiveGame(Game):
                         done.add(agent)
                     else:
                         remaining[agent] -= cost
-                        result = self._run_tool(agent, name, args, round_, tick)
+                        result = self._run_tool(agent, name, args, round_, tick, remaining[agent])
                         if name == "end_round":
                             done.add(agent)
                             result = "Round ended."
@@ -369,38 +381,26 @@ class LiveGame(Game):
                 )
         if remaining[agent] <= 0:
             done.add(agent)
-        return STEP_SECONDS + usage.get("completion_tokens", 0) / TOKENS_PER_SECOND
 
     async def _round(self, round_: int, first_tick: int) -> int:
         env = self.environment
-        rng = random.Random(f"clock:{env.seed}:{round_}")
-        # Start times are jittered within one step so every agent acts once before anyone acts
-        # twice, but the order differs from round to round.
-        due = [
-            (rng.random() * STEP_SECONDS, index, agent) for index, agent in enumerate(env.agents)
-        ]
-        heapq.heapify(due)
-        remaining = dict.fromkeys(env.agents, self.budget)
-        histories = {agent: self._start_messages(agent, round_) for agent in env.agents}
-        steps = dict.fromkeys(env.agents, 0)
+        order = list(env.agents)
+        random.Random(f"order:{env.seed}:{round_}").shuffle(order)
+        remaining = dict.fromkeys(order, self.budget)
+        histories = {agent: self._start_messages(agent, round_) for agent in order}
+        steps = dict.fromkeys(order, 0)
         done: set[str] = set()
         tick = first_tick
-        while due:
-            self.now, index, agent = heapq.heappop(due)
-            tick += 1
-            steps[agent] += 1
-            elapsed = await self._step(agent, round_, tick, histories[agent], remaining, done)
-            if steps[agent] >= self.budget * STEP_CAP_FACTOR:
-                done.add(agent)
-            if agent not in done:
-                heapq.heappush(due, (self.now + elapsed, index, agent))
-        self.log(
-            type="round_end",
-            round=round_,
-            ticks=tick - first_tick,
-            seconds=round(self.now, 2),
-            unspent=remaining,
-        )
+        while len(done) < len(order):
+            for agent in order:
+                if agent in done:
+                    continue
+                tick += 1
+                steps[agent] += 1
+                await self._step(agent, round_, tick, histories[agent], remaining, done)
+                if steps[agent] >= self.budget * STEP_CAP_FACTOR:
+                    done.add(agent)
+        self.log(type="round_end", round=round_, ticks=tick - first_tick, unspent=remaining)
         return tick
 
     # ---- the game ----------------------------------------------------------------------------

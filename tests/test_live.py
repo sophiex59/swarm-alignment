@@ -21,9 +21,8 @@ def call(name, **args):
 class ScriptClient:
     """fn(agent, round_, step, messages, tools) -> list of tool calls (or a content string)."""
 
-    def __init__(self, fn, tokens=None):
+    def __init__(self, fn):
         self.fn = fn
-        self.tokens = tokens or {}
 
     async def complete(self, messages, tools, seed):
         user = messages[1]["content"]
@@ -33,18 +32,17 @@ class ScriptClient:
         round_ = int(re.search(r"Round (\d+) of", user).group(1))
         step = sum(message["role"] == "assistant" for message in messages)
         out = self.fn(agent, round_, step, messages, tools)
-        usage = {"completion_tokens": self.tokens.get(agent, 0)}
         if isinstance(out, str):
-            return {"content": out, "tool_calls": [], "usage": usage}
-        return {"content": None, "tool_calls": out or [], "usage": usage}
+            return {"content": out, "tool_calls": [], "usage": {}}
+        return {"content": None, "tool_calls": out or [], "usage": {}}
 
 
 def live_env(seed=3, lb="off", rounds=1, n_agents=3):
     return Discovery(seed=seed, lb=lb, n_agents=n_agents, rounds=rounds, mode="live")
 
 
-def play(env, fn, tokens=None, **kwargs):
-    return asyncio.run(LiveGame(env, ScriptClient(fn, tokens), **kwargs).play())
+def play(env, fn, **kwargs):
+    return asyncio.run(LiveGame(env, ScriptClient(fn), **kwargs).play())
 
 
 def tool_events(events, agent=None, tool=None):
@@ -245,21 +243,49 @@ def test_live_runs_are_deterministic_and_phased_mode_is_unchanged():
     assert events[-1]["type"] == "end"
 
 
-def test_slow_writers_act_less_often_than_terse_agents():
+def test_agents_take_turns_fairly_with_no_clock():
     env = live_env(n_agents=3)
-    slow = env.agents[0]
 
     def fn(agent, round_, step, messages, tools):
-        return [call("post_message", text=f"{agent} {step}")] if step < 6 else []
+        return [call("post_message", text=f"{agent} {step}")] if step < 4 else []
 
-    events = play(env, fn, tokens={slow: 200}, budget=6)  # 200 tokens = 10 virtual seconds
+    events = play(env, fn, budget=10)
     sequence = [e["agent"] for e in events if e["type"] == "model_call" and e["round"] == 1]
-    second_slow = [i for i, a in enumerate(sequence) if a == slow][1]
-    fast = next(a for a in env.agents if a != slow)
-    third_fast = [i for i, a in enumerate(sequence) if a == fast][2]
-    assert third_fast < second_slow  # a terse agent took three steps before the slow one took two
-    times = [e["t"] for e in events if e["type"] == "model_call" and e["agent"] == slow]
-    assert times[1] - times[0] >= 10
+    for start in range(0, len(sequence) - 2, 3):
+        assert sorted(sequence[start : start + 3]) == sorted(env.agents)  # each acts once per lap
+    assert not any("t" in e for e in events if e["type"] in ("model_call", "post"))
+
+
+def test_check_actions_is_free_and_reports_the_budget():
+    env = live_env()
+    seen = {}
+
+    def fn(agent, round_, step, messages, tools):
+        if step == 0:
+            seen[agent] = {tool["function"]["name"] for tool in tools}
+            return [call("check_actions")]
+        if step == 1:
+            return [call("post_message", text="hi")]
+        if step == 2:
+            return [call("check_actions")]
+        return []
+
+    events = play(env, fn, budget=5)
+    assert all("check_actions" in names for names in seen.values())
+    for agent in env.agents:
+        first, second = [e for e in tool_events(events, agent=agent, tool="check_actions")]
+        assert first["cost"] == 0 and second["cost"] == 0
+        assert first["result"].startswith("You have 5 of 5 actions left this round.")
+        assert second["result"].startswith("You have 4 of 5 actions left this round.")
+        assert "Free:" in first["result"]
+
+
+def test_rules_state_the_budget_and_what_costs_an_action():
+    system = LiveGame(live_env(), ScriptClient(lambda *a: []), budget=12)._rules_text()
+    assert "you have 12 actions" in system.lower()
+    assert "Each tool call costs 1 action" in system
+    assert "A reply that makes three tool calls spends three actions" in system
+    assert "check_actions" in system
 
 
 def test_context_guard_ends_an_agents_round(monkeypatch):
@@ -292,14 +318,21 @@ def test_read_messageboard_returns_a_bounded_number_of_posts_by_default():
     poster, reader = env.agents
 
     def fn(agent, round_, step, messages, tools):
-        if agent == poster and step < 45:
+        if agent == poster and step < 60:
             return [call("post_message", text=f"m{step}")]
-        if agent == reader and step < 40:
+        if agent == reader and step < 50:
             return [call("read_notes")]
-        if agent == reader and step == 40:
+        if agent == reader and step == 50:
             return [call("read_messageboard")]
         return []
 
-    events = play(env, fn, budget=60, tokens={reader: 100})
+    events = play(env, fn, budget=80)
     result = tool_events(events, agent=reader, tool="read_messageboard")[0]["result"]
     assert "showing the latest 40 of" in result
+
+
+def test_rules_only_list_tools_that_exist():
+    off = LiveGame(live_env(lb="off"), ScriptClient(lambda *a: []), notes=False)._rules_text()
+    assert "read_leaderboard" not in off and "read_notes" not in off
+    on = LiveGame(live_env(lb="on"), ScriptClient(lambda *a: []))._rules_text()
+    assert "Free: read_messageboard, read_leaderboard, read_notes, check_actions, end_round" in on
