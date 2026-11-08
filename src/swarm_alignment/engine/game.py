@@ -64,12 +64,12 @@ class Game:
         via: str,
         pending: list[Post],
     ) -> str:
+        full_text = text.strip()
+        if not full_text:
+            return "Error: the message is empty."
         if state.posted_this_turn:
             return "Error: you have already posted this turn."
         state.posted_this_turn = True
-        full_text = text.strip()
-        if not full_text:
-            return ""
         mentions = parse_mentions(full_text, self.environment.agents)
         stored_text = full_text[:MAX_POST_LENGTH]
         pending.append(
