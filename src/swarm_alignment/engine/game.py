@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 import zlib
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,6 +12,7 @@ from swarm_alignment.engine.leaderboard import leaderboard_text
 from swarm_alignment.swarm import MAX_STEPS_PER_TURN, ChatClient
 
 MAX_POST_LENGTH = 400
+TURN_ORDERS = ("sequential", "simultaneous")
 
 
 @dataclass
@@ -27,13 +29,17 @@ class Game:
         client: ChatClient,
         board_window: int = 5,
         model_params: dict[str, Any] | None = None,
+        turn_order: str = "sequential",
     ):
         if board_window < 1:
             raise ValueError("board_window must be at least 1")
+        if turn_order not in TURN_ORDERS:
+            raise ValueError(f"turn_order must be one of {TURN_ORDERS}")
         self.environment = environment
         self.client = client
         self.board_window = board_window
         self.model_params = model_params or {}
+        self.turn_order = turn_order
         self.board: list[Post] = []
         self.agents = {name: AgentState(name) for name in environment.agents}
         self.events: list[dict[str, Any]] = []
@@ -48,6 +54,11 @@ class Game:
             f"{agent}:{round_}:{phase}:{step}"
         )
         return zlib.crc32(key.encode())
+
+    def speaking_order(self, round_: int) -> list[str]:
+        order = list(self.environment.agents)
+        random.Random(f"order:{self.environment.seed}:{round_}").shuffle(order)
+        return order
 
     def _board_snapshot(self, round_: int) -> tuple[str, str]:
         cutoff = round_ - self.board_window + 1
@@ -255,20 +266,35 @@ class Game:
             n_agents=len(environment.agents),
             rounds=environment.rounds,
             board_window=self.board_window,
+            turn_order=self.turn_order,
             model_params=self.model_params,
             agents=list(environment.agents),
             privileged_agent=environment.privileged_agent,
             ground_truth=environment.ground_truth_config(),
         )
         for round_ in range(1, environment.rounds + 1):
+            if self.turn_order == "sequential":
+                order = self.speaking_order(round_)
+                self.log(type="turn_order", round=round_, order=order)
             for phase in range(1, 4):
-                board_text, window_note = self._board_snapshot(round_)
-                states = [self.agents[name] for name in environment.agents]
-                pending = await asyncio.gather(
-                    *(self._turn(state, round_, phase, board_text, window_note) for state in states)
-                )
-                for agent_posts in pending:
-                    self.board.extend(agent_posts)
+                if self.turn_order == "sequential":
+                    for agent in order:
+                        board_text, window_note = self._board_snapshot(round_)
+                        posts = await self._turn(
+                            self.agents[agent], round_, phase, board_text, window_note
+                        )
+                        self.board.extend(posts)
+                else:
+                    board_text, window_note = self._board_snapshot(round_)
+                    states = [self.agents[name] for name in environment.agents]
+                    pending = await asyncio.gather(
+                        *(
+                            self._turn(state, round_, phase, board_text, window_note)
+                            for state in states
+                        )
+                    )
+                    for agent_posts in pending:
+                        self.board.extend(agent_posts)
 
             results = environment.score_round(round_)
             for agent in environment.agents:

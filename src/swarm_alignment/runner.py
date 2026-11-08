@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from swarm_alignment.client import OpenAIChatClient
-from swarm_alignment.engine.game import Game
+from swarm_alignment.engine.game import TURN_ORDERS, Game
 from swarm_alignment.run import parse_seeds, wait_for_health
 
 
@@ -39,6 +39,7 @@ async def run_all(
                 client,
                 board_window=args.board_window,
                 model_params=model_params,
+                turn_order=args.turn_order,
             ).play()
             events[-1]["wall_seconds"] = round(time.monotonic() - start, 2)
         temporary = path.with_suffix(".tmp")
@@ -57,6 +58,7 @@ def main() -> None:
     parser.add_argument("--n-agents", type=int, default=4)
     parser.add_argument("--rounds", type=int, default=20)
     parser.add_argument("--board-window", type=int, default=5)
+    parser.add_argument("--turn-order", choices=TURN_ORDERS, default="sequential")
     parser.add_argument("--base-url", default=os.environ.get("SWARM_BASE_URL"))
     parser.add_argument("--api-key-env", default="VLLM_API_KEY")
     parser.add_argument("--model", default="llm")

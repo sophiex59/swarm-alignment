@@ -162,7 +162,7 @@ def test_board_content_limit_mentions_and_phase_snapshot():
     first = environment.agents[0]
     other = environment.agents[1]
     client = BoardClient(first, other)
-    events = asyncio.run(Game(environment, client).play())
+    events = asyncio.run(Game(environment, client, turn_order="simultaneous").play())
 
     posts = [event for event in events if event["type"] == "post" and event["agent"] == first]
     assert len(posts) == 1

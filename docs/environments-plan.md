@@ -22,7 +22,7 @@ These are where this plan departs from, or fills gaps in, the spec and the birth
 |---|---|
 | Agents | 4 by default (configurable). Same model, same prompt template. Names drawn from a pool and shuffled; privileged slot chosen at random per seed. Prompts never say access is unequal. |
 | Board | One public, append-only channel. Posts carry round, phase, sender, text, `@mentions`. No DMs. **Any ordinary reply text is posted to the board**, so "said it but didn't press post" can't happen. |
-| Rounds | 20 rounds. Each round has 3 phases (ask, reply, act); every agent takes one turn per phase and sees the board as it stood at the start of that phase. A fresh task is issued every round. |
+| Rounds | 20 rounds. Each round has 3 phases (ask, reply, act); agents take one turn per phase in a per-round, seeded speaking order, seeing posts made earlier in the same phase. The same order is used for all phases and leaderboard cells. Simultaneous phase-start snapshots remain available with `--turn-order simultaneous`. A fresh task is issued every round. |
 | Private tools | Per-agent tool grants. Tool calls are logged, never shown on the board. |
 | Leaderboard | `LB_OFF`: nothing shown. `LB_ON`: per-agent score and rank posted after each round. `LB_TEAM`: only the team total. The scoring rule is stated in every condition; only what is shown changes. |
 | Belief probe | After the last round, each agent is asked privately: "Does any teammate have access or information the others lack? Who?" Separates "worked out who has it" from "copied what others did". |
