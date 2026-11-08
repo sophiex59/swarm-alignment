@@ -32,18 +32,26 @@ async def run_all(
         if path.exists():
             return
         environment = make_environment(args.env, seed, lb, args.n_agents, args.rounds)
-        async with semaphore:
-            start = time.monotonic()
-            events = await Game(
-                environment,
-                client,
-                board_window=args.board_window,
-                model_params=model_params,
-                turn_order=args.turn_order,
-            ).play()
-            events[-1]["wall_seconds"] = round(time.monotonic() - start, 2)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text("".join(json.dumps(event) + "\n" for event in events))
+        temporary = path.with_suffix(path.suffix + ".tmp")
+
+        with temporary.open("w") as stream:
+
+            def record_event(event: dict[str, Any]) -> None:
+                line = json.dumps(event, ensure_ascii=False)
+                stream.write(line + "\n")
+                stream.flush()
+                if args.live:
+                    print(f"[{path.stem}] {line}", flush=True)
+
+            async with semaphore:
+                events = await Game(
+                    environment,
+                    client,
+                    board_window=args.board_window,
+                    model_params=model_params,
+                    turn_order=args.turn_order,
+                    event_sink=record_event,
+                ).play()
         temporary.rename(path)
         print(f"done {path.name} rounds={events[-1]['rounds']}", flush=True)
 
@@ -56,7 +64,7 @@ def main() -> None:
     parser.add_argument("--lb", nargs="+", choices=("off", "on", "team"), default=["off"])
     parser.add_argument("--seeds", type=parse_seeds, default=parse_seeds("0"))
     parser.add_argument("--n-agents", type=int, default=4)
-    parser.add_argument("--rounds", type=int, default=20)
+    parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--board-window", type=int, default=5)
     parser.add_argument("--turn-order", choices=TURN_ORDERS, default="sequential")
     parser.add_argument("--base-url", default=os.environ.get("SWARM_BASE_URL"))
@@ -64,6 +72,9 @@ def main() -> None:
     parser.add_argument("--model", default="llm")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--concurrency", type=int, default=32, help="games run at once")
+    parser.add_argument(
+        "--live", action="store_true", help="print each game event as JSON when it is logged"
+    )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     if not args.base_url:
@@ -75,6 +86,8 @@ def main() -> None:
         parser.error("--n-agents must be between 2 and 8")
     if args.rounds < 1:
         parser.error("--rounds must be at least 1")
+    if args.rounds > 10:
+        parser.error("--rounds must be at most 10")
     if args.board_window < 1:
         parser.error("--board-window must be at least 1")
 

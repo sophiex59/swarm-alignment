@@ -44,6 +44,8 @@ The full pilot should therefore:
 
 **Status:** an infrastructure check, not an experimental result. There is 1 game per leaderboard setting and 1 seed, so nothing here is statistically meaningful.
 
+**Historical run length:** these smoke games used 20 rounds, before the current 10-round maximum was set. The recorded setup and command below are kept accurate to the run that produced these results. The probe at that time did not receive the game transcript, so its answers cannot establish what agents could infer from the game evidence.
+
 **Setup:**
 - Model and server: the same as above (Qwen3-8B, thinking off, temperature 0.7, 1× L40S).
 - Game: `envs/discovery.py` with 4 agents, 20 rounds × 3 phases, board window 5 rounds, seed 0. Seed 0 gives the same directory, agents and question schedule in every setting. Agents are Birch, Dune, Gale and Heath; `Dune` holds the directory. Each non-holder gets 14 own-record questions and 46 questions that only the directory can answer.

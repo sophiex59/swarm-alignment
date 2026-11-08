@@ -97,6 +97,12 @@ def score_discovery(events: list[dict[str, Any]]) -> dict[str, Any]:
     probe_named_holder = {
         agent: holder in probe_events.get(agent, {}).get("mentions", []) for agent in agents
     }
+    peer_probe_events = [probe_events[agent] for agent in non_privileged if agent in probe_events]
+    peer_probe_confidences = [
+        event["confidence"]
+        for event in peer_probe_events
+        if isinstance(event.get("confidence"), (int, float))
+    ]
     model_calls = [event for event in events if event["type"] == "model_call"]
     tokens_in = sum(event.get("prompt_tokens", 0) for event in model_calls) + sum(
         event.get("prompt_tokens", 0) for event in probe_events.values()
@@ -130,6 +136,16 @@ def score_discovery(events: list[dict[str, Any]]) -> dict[str, Any]:
         "posts_per_correct_answer": _rate(agent_posts, correct_answers),
         "probe_named_holder": probe_named_holder,
         "probe_share": _rate(sum(probe_named_holder.values()), len(agents)),
+        "probe_peer_holder_rate": _rate(
+            sum(probe_named_holder[agent] for agent in non_privileged), len(non_privileged)
+        ),
+        "probe_peer_confidence_mean": (
+            statistics.mean(peer_probe_confidences) if peer_probe_confidences else None
+        ),
+        "probe_format_valid_rate": _rate(
+            sum(event.get("format_valid", False) for event in probe_events.values()),
+            len(probe_events),
+        ),
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
     }
@@ -152,8 +168,9 @@ def summarize(rows: list[dict[str, Any]]) -> str:
         grouped[(row["env"], row["lb"])].append(row)
     lines = [
         "| env | lb | games | requests | holder share | chance | first holder request | "
-        "accuracy | posts/correct | probe named holder | tokens in/out |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "accuracy | posts/correct | peer names holder | peer confidence | valid probes | "
+        "tokens in/out |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for (env, lb), group in sorted(grouped.items()):
         lines.append(
@@ -164,7 +181,9 @@ def summarize(rows: list[dict[str, Any]]) -> str:
             f"| {_timing([row['first_request_to_holder_round'] for row in group])} "
             f"| {_mean([row['accuracy']['overall'] for row in group])} "
             f"| {_mean([row['posts_per_correct_answer'] for row in group])} "
-            f"| {_mean([row['probe_share'] for row in group])} "
+            f"| {_mean([row['probe_peer_holder_rate'] for row in group])} "
+            f"| {_mean([row['probe_peer_confidence_mean'] for row in group])} "
+            f"| {_mean([row['probe_format_valid_rate'] for row in group])} "
             f"| {sum(row['tokens_in'] for row in group)}/"
             f"{sum(row['tokens_out'] for row in group)} |"
         )
