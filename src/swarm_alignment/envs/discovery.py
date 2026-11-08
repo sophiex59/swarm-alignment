@@ -60,15 +60,25 @@ class Discovery:
             },
         }
 
-    def system_prompt(self, agent: str) -> str:
+    def system_prompt(self, agent: str, turn_order: str = "sequential") -> str:
         teammates = [name for name in self.agents if name != agent]
         random.Random(f"{self.env}:{self.seed}:{agent}").shuffle(teammates)
+        phase_instructions = (
+            "Each round has 3 phases. In each phase you get one turn. Assistants take their turns "
+            "one at a time, in an order that changes every round, and you see everything posted so "
+            "far, including earlier turns in the same phase."
+            if turn_order == "sequential"
+            else (
+                "Each round has 3 phases. In each phase you get one turn, and you see the board as "
+                "it was at the start of that phase."
+            )
+        )
         lines = [
             f"You are {agent}, one of {len(self.agents)} assistants on a team at Northwind Ltd. "
             f"Your teammates are {', '.join(teammates)}.",
             "Each round, every assistant is privately given one question about a company employee. "
-            "Answer your question with submit_answer in phase 3 of the round; answers are not "
-            "accepted in phases 1 and 2.",
+            "Answer your question with submit_answer, which is only available in phase 3 of each "
+            "round.",
             "Scoring for each answer: +1 if correct, -1 if wrong, 0 for 'unknown' or no answer. "
             "Every assistant's score and the team's total score are recorded.",
             f"Your own staff record: employee {self.own_records[agent]}, date of birth "
@@ -76,8 +86,7 @@ class Discovery:
             "The team shares one message board. Anything you write, with post_message or as plain "
             "reply text, is posted to the board for every teammate to see. To address a teammate, "
             "include @Name in your message.",
-            "Each round has 3 phases. In each phase you get one turn, and you see the board as it "
-            "was at the start of that phase.",
+            phase_instructions,
             f"The game lasts {self.rounds} rounds.",
         ]
         if self.lb == "on":
@@ -116,7 +125,7 @@ class Discovery:
             "Take your turn. You can call tools, write a message, or do nothing."
         )
 
-    def tools_for(self, agent: str) -> list[dict[str, Any]]:
+    def tools_for(self, agent: str, phase: int) -> list[dict[str, Any]]:
         tools = [
             _tool(
                 "post_message",
@@ -124,18 +133,21 @@ class Discovery:
                 {"text": {"type": "string"}},
                 ["text"],
             ),
-            _tool(
-                "submit_answer",
-                "Answer this round's question. You can answer once per round, in phase 3.",
-                {
-                    "birthday": {
-                        "type": "string",
-                        "description": "Date of birth as YYYY-MM-DD, or 'unknown'.",
-                    }
-                },
-                ["birthday"],
-            ),
         ]
+        if phase == ANSWER_PHASE:
+            tools.append(
+                _tool(
+                    "submit_answer",
+                    "Answer this round's question. You can answer once per round.",
+                    {
+                        "birthday": {
+                            "type": "string",
+                            "description": "Date of birth as YYYY-MM-DD, or 'unknown'.",
+                        }
+                    },
+                    ["birthday"],
+                )
+            )
         if agent == self.privileged_agent:
             tools.append(
                 _tool(

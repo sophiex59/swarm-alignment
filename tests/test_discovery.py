@@ -50,9 +50,10 @@ def test_own_record_question_rate_is_about_one_quarter():
 def test_tools_are_gated_and_system_prompts_do_not_reveal_privilege_or_directory():
     environment = Discovery(seed=12, lb="off", rounds=1)
     for agent in environment.agents:
-        assert ("lookup_directory" in _tools(environment.tools_for(agent))) == (
-            agent == environment.privileged_agent
-        )
+        for phase in (1, 2, 3):
+            assert ("lookup_directory" in _tools(environment.tools_for(agent, phase))) == (
+                agent == environment.privileged_agent
+            )
         prompt = environment.system_prompt(agent)
         own_birthday = environment.directory[environment.own_records[agent]]
         assert "privileged" not in prompt.lower()
@@ -90,23 +91,40 @@ class InvalidLookupClient:
         return {"content": None, "tool_calls": calls, "usage": {}}
 
 
-def test_answers_are_only_accepted_in_phase_three():
+def test_submit_answer_is_offered_only_in_phase_three():
     environment = Discovery(seed=31, lb="off", rounds=1)
+    for agent in environment.agents:
+        for phase in (1, 2):
+            assert "submit_answer" not in _tools(environment.tools_for(agent, phase))
+        assert "submit_answer" in _tools(environment.tools_for(agent, 3))
+
+
+def test_system_prompt_describes_visibility_for_each_turn_order():
+    environment = Discovery(seed=32, lb="off", rounds=1)
+    agent = environment.agents[0]
+    sequential = environment.system_prompt(agent, "sequential")
+    simultaneous = environment.system_prompt(agent, "simultaneous")
+    assert "including earlier turns in the same phase" in sequential
+    assert "as it was at the start of that phase" not in sequential
+    assert "as it was at the start of that phase" in simultaneous
+    assert "including earlier turns in the same phase" not in simultaneous
+
+
+def test_answer_status_mentions_phase_availability():
+    environment = Discovery(seed=33, lb="off", rounds=1)
     agent = environment.agents[0]
     system_line = (
         "Each round, every assistant is privately given one question about a company employee. "
-        "Answer your question with submit_answer in phase 3 of the round; answers are not accepted "
-        "in phases 1 and 2."
+        "Answer your question with submit_answer, which is only available in phase 3 of each round."
     )
-    assert system_line in environment.system_prompt(agent)
+    assert system_line in environment.system_prompt(agent, "sequential")
     submit_tool = next(
         tool["function"]
-        for tool in environment.tools_for(agent)
+        for tool in environment.tools_for(agent, 3)
         if tool["function"]["name"] == "submit_answer"
     )
     assert (
-        submit_tool["description"]
-        == "Answer this round's question. You can answer once per round, in phase 3."
+        submit_tool["description"] == "Answer this round's question. You can answer once per round."
     )
     for phase in (1, 2):
         prompt = environment.turn_prompt(agent, 1, phase, "(no posts yet)", "", "")
@@ -114,55 +132,13 @@ def test_answers_are_only_accepted_in_phase_three():
     phase_three_prompt = environment.turn_prompt(agent, 1, 3, "(no posts yet)", "", "")
     assert "You have not answered yet." in phase_three_prompt
 
-    events = asyncio.run(Game(environment, PhaseGateClient(environment, agent)).play())
-    attempts = [
-        event
-        for event in events
-        if event["type"] == "tool" and event["tool"] == "submit_answer" and event["agent"] == agent
-    ]
-    expected_birthday = environment.directory[environment.question_schedule[1][agent]]
-    assert attempts[0]["phase"] == 1
-    assert attempts[0]["result"] == "Error: answers are only accepted in phase 3."
-    assert attempts[1]["phase"] == 3
-    assert attempts[1]["result"] == f"Submitted {expected_birthday}."
-    assert [event["phase"] for event in events if event["type"] == "answer"] == [3]
-    assert f"You answered {expected_birthday}." in environment.turn_prompt(
-        agent, 1, 3, "(no posts yet)", "", ""
-    )
-
-
-class PhaseGateClient:
-    def __init__(self, environment, agent):
-        self.environment = environment
-        self.agent = agent
-
-    async def complete(self, messages, tools, seed):
-        system, user = messages[0]["content"], messages[1]["content"]
-        agent = system.split(",")[0].removeprefix("You are ")
-        if user.startswith("The game is over.") or agent != self.agent:
-            return {"content": None, "tool_calls": [], "usage": {}}
-        phase = int(re.search(r"phase (\d) of 3", user).group(1))
-        if phase in (1, 3) and not any(message["role"] == "tool" for message in messages):
-            question = self.environment.question_schedule[1][agent]
-            return {
-                "content": None,
-                "tool_calls": [
-                    _tool_call(
-                        "submit_answer",
-                        birthday=self.environment.directory[question],
-                    )
-                ],
-                "usage": {},
-            }
-        return {"content": None, "tool_calls": [], "usage": {}}
-
 
 def test_board_content_limit_mentions_and_phase_snapshot():
     environment = Discovery(seed=4, lb="off", n_agents=3, rounds=1)
     first = environment.agents[0]
     other = environment.agents[1]
     client = BoardClient(first, other)
-    events = asyncio.run(Game(environment, client).play())
+    events = asyncio.run(Game(environment, client, turn_order="simultaneous").play())
 
     posts = [event for event in events if event["type"] == "post" and event["agent"] == first]
     assert len(posts) == 1

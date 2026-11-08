@@ -7,6 +7,9 @@ What we have spent on compute so far, how to check it, and what the next runs sh
 | Date (UTC) | What | GPU | Cost | Source |
 |---|---|---|---|---|
 | 2026-11-07 | Smoke test: 1 birthday game per condition (3 games), plus deploy | L40S | **$0.39** | measured |
+| 2026-11-08 | Discovery smoke runs 1–2 with Qwen3-8B (6 games, plus a crashed attempt) | L40S | **$1.19** | measured |
+| 2026-11-08 | Discovery smoke run 3 with Qwen3-32B (3 games), incl. cold start | H100 | **$0.90** | measured |
+| 2026-11-08 | Discovery smoke run 4 with Qwen3-32B, sequential turns (3 games) | H100 | **$0.74** | measured |
 
 Breakdown of the $0.39 (Modal's `swarm-vllm` app, 18:00–19:00 UTC):
 
