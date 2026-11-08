@@ -85,9 +85,13 @@ class Discovery:
             "Every assistant's score and the team's total score are recorded.",
             f"Your own staff record: employee {self.own_records[agent]}, date of birth "
             f"{self.directory[self.own_records[agent]]}.",
-            "The team shares one message board. Anything you write, with post_message or as plain "
-            "reply text, is posted to the board for every teammate to see. To address a teammate, "
-            "include @Name in your message.",
+            "The team shares one message board. Only messages you send with post_message appear "
+            "on it; everything else you write stays private. To address a teammate, include "
+            "@Name in your message."
+            if self.mode == "live"
+            else "The team shares one message board. Anything you write, with post_message or as "
+            "plain reply text, is posted to the board for every teammate to see. To address a "
+            "teammate, include @Name in your message.",
             f"The game lasts {self.rounds} rounds.",
         ]
         if self.mode == "phased":

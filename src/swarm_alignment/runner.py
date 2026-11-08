@@ -85,6 +85,18 @@ def main() -> None:
         "--notes", action=argparse.BooleanOptionalAction, default=True, help="private notes (live)"
     )
     parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
+    parser.add_argument(
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Qwen3 thinking mode; reasoning is logged privately, never posted",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=3072,
+        help="max tokens per model reply (thinking included); prompt + this must fit in 16k",
+    )
     parser.add_argument("--base-url", default=os.environ.get("SWARM_BASE_URL"))
     parser.add_argument("--api-key-env", default="VLLM_API_KEY")
     parser.add_argument("--model", default="llm")
@@ -121,8 +133,15 @@ def main() -> None:
         api_key=api_key,
         model=args.model,
         temperature=args.temperature,
+        max_tokens=args.max_tokens,
+        thinking=args.thinking,
     )
-    model_params = {"model": args.model, "temperature": args.temperature}
+    model_params = {
+        "model": args.model,
+        "temperature": args.temperature,
+        "max_tokens": args.max_tokens,
+        "thinking": args.thinking,
+    }
     start = time.monotonic()
     asyncio.run(run_all(args, client, args.out, model_params))
     print(f"all games done in {time.monotonic() - start:.0f}s", flush=True)

@@ -122,13 +122,64 @@ def test_budget_limits_costly_calls_and_read_cost_is_configurable():
         assert "no actions left" in results[1]
 
 
-def test_content_only_reply_is_posted_and_costs_one_action():
+def test_reply_text_and_reasoning_are_private_and_free():
     env = live_env()
-    events = play(env, lambda agent, r, step, m, t: f"chat {step}" if step < 5 else [], budget=2)
-    for agent in env.agents:
-        posts = [e for e in events if e["type"] == "post" and e["agent"] == agent]
-        assert len(posts) == 2
-        assert all(post["via"] == "content" for post in posts)
+    secret = "my private plan is to ask nobody"
+
+    class ThinkingClient(ScriptClient):
+        async def complete(self, messages, tools, seed):
+            reply = await super().complete(messages, tools, seed)
+            reply["reasoning"] = "hidden chain of thought"
+            return reply
+
+    def fn(agent, round_, step, messages, tools):
+        return secret if step < 5 else []
+
+    events = asyncio.run(LiveGame(env, ThinkingClient(fn), budget=2).play())
+    assert not any(e["type"] == "post" and e["agent"] in env.agents for e in events)
+    calls = [e for e in events if e["type"] == "model_call"]
+    assert all(c["reasoning"] == "hidden chain of thought" for c in calls)
+    assert all(c["content"] == secret for c in calls)
+    # three idle replies end the round, and none of them cost an action
+    assert sum(e["type"] == "idle_end" for e in events) == len(env.agents)
+    assert all(c["agent"] for c in calls) and len(calls) == 3 * len(env.agents)
+    end = next(e for e in events if e["type"] == "round_end")
+    assert set(end["unspent"].values()) == {2}
+
+
+def test_private_reply_notice_and_idle_counter_resets_after_a_tool_call():
+    env = live_env(n_agents=2)
+    notices = []
+
+    def fn(agent, round_, step, messages, tools):
+        if step in (0, 1, 3, 4):
+            if step in (1, 4):
+                notices.append(messages[-1]["content"])
+            return "thinking out loud"
+        if step == 2:
+            return [call("check_actions")]
+        return []
+
+    events = play(env, fn)
+    assert all(n.startswith("That reply was private") for n in notices)
+    ends = [e for e in events if e["type"] == "idle_end"]
+    assert len(ends) == 2  # each agent: 2 idle, a tool call resets, then 3 idle
+
+
+def test_model_errors_end_the_agents_round_without_crashing():
+    env = live_env()
+
+    class FailingClient(ScriptClient):
+        async def complete(self, messages, tools, seed):
+            if not messages[1]["content"].startswith("The game is over."):
+                raise RuntimeError("context length exceeded")
+            return await super().complete(messages, tools, seed)
+
+    events = asyncio.run(LiveGame(env, FailingClient(lambda *a: [])).play())
+    errors = [e for e in events if e["type"] == "model_error"]
+    assert len(errors) == len(env.agents)
+    assert "context length exceeded" in errors[0]["error"]
+    assert events[-1]["type"] == "end"
 
 
 def test_tool_sets_by_condition_and_privilege():
@@ -283,7 +334,8 @@ def test_check_actions_is_free_and_reports_the_budget():
 def test_rules_state_the_budget_and_what_costs_an_action():
     system = LiveGame(live_env(), ScriptClient(lambda *a: []), budget=12)._rules_text()
     assert "you have 12 actions" in system.lower()
-    assert "Each tool call costs 1 action" in system
+    assert "Each tool call costs 1 action, including post_message" in system
+    assert "PRIVACY." in system and "The only way to share anything" in system
     assert "A reply that makes three tool calls spends three actions" in system
     assert "check_actions" in system
 
@@ -416,3 +468,12 @@ def test_live_prompt_says_submit_answer_is_for_your_own_question():
     assert "only answers your own question" in env.system_prompt(agent)
     submit = next(t for t in env.tools_for(agent) if t["function"]["name"] == "submit_answer")
     assert "never a teammate's" in submit["function"]["description"]
+
+
+def test_live_prompt_says_only_post_message_reaches_the_board():
+    env = live_env()
+    prompt = env.system_prompt(env.agents[0])
+    assert "Only messages you send with post_message appear on it" in prompt
+    assert "plain reply text, is posted" not in prompt
+    phased = Discovery(seed=3, lb="off")
+    assert "plain reply text, is posted" in phased.system_prompt(phased.agents[0])
