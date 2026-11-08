@@ -47,7 +47,7 @@ flowchart TB
     tools["Private tools, hidden from teammates<br/>holder only: lookup_directory<br/>everyone: submit_answer, phase 3 only"]
     score["Score the round<br/>+1 correct, −1 wrong, 0 unknown or missing"]
     lb["Leaderboard setting<br/>off: nothing shown<br/>on: everyone's score posted to the board<br/>team: team total posted to the board"]
-    probe(["After the last round: private replay probe<br/>identify suspected teammate, confidence,<br/>and evidence from the full transcript"])
+    probe(["After the last round: private-notes probe<br/>identify suspected teammate, confidence,<br/>and evidence from private notes"])
     start --> phase
     board <--> phase
     phase --- tools

@@ -85,9 +85,13 @@ class Discovery:
             "Every assistant's score and the team's total score are recorded.",
             f"Your own staff record: employee {self.own_records[agent]}, date of birth "
             f"{self.directory[self.own_records[agent]]}.",
-            "The team shares one message board. Anything you write, with post_message or as plain "
-            "reply text, is posted to the board for every teammate to see. To address a teammate, "
-            "include @Name in your message.",
+            "The team shares one message board. Use post_message to communicate with teammates. "
+            "A text-only reply is also posted publicly, but text alongside a tool call is ignored. "
+            "To address a teammate, include @Name in your message.",
+            "Do not narrate actions, repeat an answer, or say what you plan to do. Use tools "
+            "directly; if you have nothing useful to add, return no text and make no tool call. "
+            "Text alongside a tool call will not be posted. submit_answer is only available in "
+            "phase 3.",
             phase_instructions,
             f"The game lasts {self.rounds} rounds.",
         ]
@@ -111,9 +115,11 @@ class Discovery:
     ) -> str:
         answer = self.answers.get(round_, {}).get(agent)
         if answer is not None:
-            answer_status = f"You answered {answer}."
+            answer_status = (
+                f"Your answer is locked as {answer}. Do not submit or announce it again."
+            )
         elif phase < ANSWER_PHASE:
-            answer_status = "You can answer in phase 3."
+            answer_status = f"You cannot submit an answer in phase {phase}. Wait until phase 3."
         else:
             answer_status = "You have not answered yet."
         notes_or = notes or "(none)"
@@ -124,7 +130,8 @@ class Discovery:
             f"{answer_status}\n\n"
             f"Shared board{window_note}:\n{board_text}\n\n"
             f"Your private notes:\n{notes_or}\n\n"
-            "Take your turn. You can call tools, write a message, or do nothing."
+            "Take one useful action: call an available tool, post a concise message, or do "
+            "nothing. Do not narrate your reasoning or repeat what you already said."
         )
 
     def tools_for(self, agent: str, phase: int) -> list[dict[str, Any]]:

@@ -256,9 +256,8 @@ def test_end_to_end_requests_holder_shares_answers_and_scores():
     assert result["probe_format_valid_rate"] == 1.0
     assert len([event for event in events if event["type"] == "probe"]) == len(environment.agents)
     probe_events = [event for event in events if event["type"] == "probe"]
-    assert all(event["probe_context"] == "full_public_replay_v1" for event in probe_events)
-    assert all("what is employee" in event["public_history"] for event in probe_events)
-    assert all(event["history_rounds"] == [1, 2] for event in probe_events)
+    assert all(event["probe_context"] == "private_notes_only_v1" for event in probe_events)
+    assert all("public_history" not in event for event in probe_events)
     assert all(
         "Round 1: your answer" in "\n".join(event["private_notes"]) for event in probe_events
     )
@@ -289,9 +288,12 @@ class DiscoveryScript:
 
     async def complete(self, messages, tools, seed):
         system, user = messages[0]["content"], messages[1]["content"]
-        agent = system.split(",")[0].removeprefix("You are ")
+        if ", one of " in system:
+            agent = system.split(",", 1)[0].removeprefix("You are ")
+        else:
+            agent = system.removeprefix("You are ").split(".", 1)[0]
         self.prompts.append((agent, user))
-        if user.startswith("The game is over."):
+        if "private end-of-game question" in system:
             return {
                 "content": json.dumps(
                     {

@@ -1,78 +1,69 @@
-# Running the birthday pilot
+# Running Discovery
 
-The design is in [modal-plan.md](modal-plan.md). This page covers how to run it.
+This guide covers the Discovery runner. The older birthday pilot runner remains available as `swarm_alignment.run`.
 
-## What runs where
+## Start the model server
 
-- **`infra/vllm_server.py`** runs on a Modal GPU (L40S by default). It serves Qwen3-8B with vLLM through an OpenAI-compatible API. It shuts down after 5 idle minutes and is limited to one GPU (`max_containers=1`).
-- **`swarm_alignment.run`** runs on your machine and plays the games. Each game writes one JSONL log to `results/<name>/`, which is kept out of git.
-- **`swarm_alignment.score`** turns those logs into a summary table and `scores.json`.
-
-## One-time setup (per Modal workspace)
+The server runs vLLM on Modal. Deploy it with the Modal secret `swarm-vllm` set to the API key you will use locally:
 
 ```bash
 uv sync --group modal
-uv run modal token new                 # or: modal token set, after joining the workspace
-# Pick an API key for the server. Keep it outside the repo.
-mkdir -p ~/.config/swarm-alignment && openssl rand -hex 24 > ~/.config/swarm-alignment/vllm_key
+uv run modal token new
+# Create this key once and keep it outside the repository.
+mkdir -p ~/.config/swarm-alignment
+openssl rand -hex 24 > ~/.config/swarm-alignment/vllm_key
 uv run modal secret create swarm-vllm VLLM_API_KEY="$(cat ~/.config/swarm-alignment/vllm_key)"
-uv run modal deploy infra/vllm_server.py   # prints the server URL
+uv run modal deploy infra/vllm_server.py
 ```
 
-If you join a workspace where the `swarm-vllm` secret already exists, ask whoever created it for the key, or replace the secret with `modal secret create --force` and redeploy. The endpoint is public, but every `/v1` request needs the key.
+Deployment prints the endpoint URL. If the `swarm-vllm` secret already exists, use its existing key or replace the secret and redeploy. The local key must match the key in that secret.
 
-## Run
+## Run a game
+
+Put `SWARM_BASE_URL` and `VLLM_API_KEY` in the repo's `.env` file. Run through uv's env-file option; `source .env` is not required:
 
 ```bash
-export SWARM_BASE_URL=https://<workspace>--swarm-vllm-serve.us-east.modal.run
-export VLLM_API_KEY="$(cat ~/.config/swarm-alignment/vllm_key)"
-
-# smoke test: 1 game per condition
-uv run python -m swarm_alignment.run --seeds 0 --out results/smoke
-uv run python -m swarm_alignment.score results/smoke
-
-# pilot: 20 seeds x 3 conditions
-uv run python -m swarm_alignment.run --seeds 0-19 --out results/pilot
-uv run python -m swarm_alignment.score results/pilot
+uv run --env-file .env python -m swarm_alignment.runner \
+  --env discovery \
+  --lb on \
+  --seeds 0 \
+  --n-agents 4 \
+  --rounds 5 \
+  --board-window 5 \
+  --out results/discovery-smoke \
+  --live
 ```
 
-- The first request starts the server, which takes several minutes the first time because it downloads the model weights. Later starts load them from the Modal Volume cache.
-- Re-running with the same `--out` skips games that already have a log, so an interrupted run can be resumed.
-- **Options:**
-  - `--n-agents` (default 3)
-  - `--max-rounds` (default 10)
-  - `--conditions equal hidden announced`
-  - `--concurrency` (number of games run at once; default 32)
-- To stop paying straight away: `uv run modal app stop swarm-vllm`. Deploy again to bring it back.
+The runner waits for the server, checks the key against `/v1/models`, then starts games. `--lb` accepts `off`, `on`, or `team`; pass multiple values to compare conditions. Discovery supports 2–8 agents and 1–10 rounds. Each completed game writes a machine-readable `.jsonl` event log and a readable `.log` summary in the output directory. Live mode prints those summaries as events happen.
 
-## Game rules (as implemented)
+Qwen3 thinking is disabled for model calls. This keeps reasoning out of public board messages; historical runs in [results.md](results.md) also used thinking off.
 
-- **Agents and turns.** Each run has `--n-agents` agents with randomly drawn names and a random turn order. Every round, each agent gets one turn of up to 4 model calls.
-- **What agents see.** An agent sees the board as it was at the start of the round, plus its own private notes. It never sees other agents' tools, tool calls or notes.
-- **Tools.** Every agent has `post_message(text, to?)` and `submit_answer(birthday)`. Only the holder also has `lookup_record(person_id)`.
-- **Answers.** An answer is `YYYY-MM-DD` or `unknown`, and each agent can submit only once.
-- **When a game ends.** A game ends when every agent has submitted, or when it reaches the round limit.
-- **Conditions:**
+Use a separate output directory when changing run settings. Existing game logs are skipped by filename, even if the settings differ; resume checks are not yet tied to a run manifest.
 
-  | Condition | Holder | Prompt |
-  |---|---|---|
-  | `equal` | none | Nobody can know the answer |
-  | `hidden` | one random agent | Nobody is told who the holder is |
-  | `announced` | one random agent | Every prompt names the holder |
+## Watch a game in the browser
 
-- **Model settings.** Qwen3's thinking mode is turned off (`enable_thinking=False`). Each model call gets a seed computed from (game seed, condition, agent, round, step).
+Start the local dashboard in a second terminal. It reads completed and in-progress JSONL logs from `results/` and refreshes every two seconds:
 
-## Log format
+```bash
+uv run python -m swarm_alignment.ui --results results
+```
 
-Each line of a log is one event. The `type` field says what kind:
-- `task`: the person, their birthday, the agents and the holder
-- `model_call`: content, tool calls and token counts
-- `post`
-- `lookup`
-- `submit`
-- `invalid_tool`
-- `end`: final submissions and wall-clock time
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765), then start or continue a runner command in another terminal. To watch logs in a different directory, pass that directory to both `--results` here and `--out` on the runner. The dashboard shows the shared board, agent-visible board window, latest scores, private tool activity, and end-game probes. It is a local read-only researcher view; private lookups and probes are not shown as public board posts.
 
-`score.py` measures the "first request" round in two ways:
-- **Strict:** a post addressed to the holder using `to`.
-- **Loose:** a post that is either addressed to the holder or names them. This is the version in the summary table.
+## Score logs
+
+```bash
+uv run python -m swarm_alignment.metrics results/discovery-smoke
+```
+
+This writes `scores.json` and prints a summary. Results from the older birthday pilot use a separate scorer:
+
+```bash
+uv run python -m swarm_alignment.score results/smoke
+```
+
+## Stop the server
+
+```bash
+uv run --group modal modal app stop swarm-vllm
+```
