@@ -20,6 +20,10 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Notebooks put src/ on sys.path before importing the package, and keep wide table code.
+"notebooks/*" = ["E402", "E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
