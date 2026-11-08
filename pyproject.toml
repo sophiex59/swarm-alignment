@@ -31,3 +31,6 @@ dev = [
 modal = [
     "modal>=1.6.3",
 ]
+plot = [
+    "matplotlib>=3.11.2",
+]

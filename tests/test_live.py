@@ -1,12 +1,12 @@
 import asyncio
 import json
-import random
 import re
 
 import pytest
 
+from swarm_alignment.engine import live
 from swarm_alignment.engine.game import Game
-from swarm_alignment.engine.live import LiveGame
+from swarm_alignment.engine.live import DEFAULT_BUDGET, LiveGame
 from swarm_alignment.envs.discovery import Discovery
 
 
@@ -21,8 +21,9 @@ def call(name, **args):
 class ScriptClient:
     """fn(agent, round_, step, messages, tools) -> list of tool calls (or a content string)."""
 
-    def __init__(self, fn):
+    def __init__(self, fn, tokens=None):
         self.fn = fn
+        self.tokens = tokens or {}
 
     async def complete(self, messages, tools, seed):
         user = messages[1]["content"]
@@ -32,17 +33,18 @@ class ScriptClient:
         round_ = int(re.search(r"Round (\d+) of", user).group(1))
         step = sum(message["role"] == "assistant" for message in messages)
         out = self.fn(agent, round_, step, messages, tools)
+        usage = {"completion_tokens": self.tokens.get(agent, 0)}
         if isinstance(out, str):
-            return {"content": out, "tool_calls": [], "usage": {}}
-        return {"content": None, "tool_calls": out or [], "usage": {}}
+            return {"content": out, "tool_calls": [], "usage": usage}
+        return {"content": None, "tool_calls": out or [], "usage": usage}
 
 
 def live_env(seed=3, lb="off", rounds=1, n_agents=3):
     return Discovery(seed=seed, lb=lb, n_agents=n_agents, rounds=rounds, mode="live")
 
 
-def play(env, fn, **kwargs):
-    return asyncio.run(LiveGame(env, ScriptClient(fn), **kwargs).play())
+def play(env, fn, tokens=None, **kwargs):
+    return asyncio.run(LiveGame(env, ScriptClient(fn, tokens), **kwargs).play())
 
 
 def tool_events(events, agent=None, tool=None):
@@ -62,8 +64,6 @@ def test_live_game_requires_a_live_environment():
 
 def test_board_is_live_within_a_round():
     env = live_env()
-    order = list(env.agents)
-    random.Random(f"order:{env.seed}:1").shuffle(order)
 
     def fn(agent, round_, step, messages, tools):
         if step == 0:
@@ -71,6 +71,8 @@ def test_board_is_live_within_a_round():
         return []
 
     events = play(env, fn, budget=4)
+    order = [e["agent"] for e in events if e["type"] == "model_call"][: len(env.agents)]
+    assert sorted(order) == sorted(env.agents)
     for position, agent in enumerate(order):
         result = tool_events(events, agent=agent, tool="read_messageboard")[0]["result"]
         # sees its own post and the posts of agents who already acted, never later ones
@@ -233,9 +235,71 @@ def test_live_runs_are_deterministic_and_phased_mode_is_unchanged():
     second = play(live_env(seed=9), fn)
     assert first == second
     config = first[0]
-    assert config["mode"] == "live" and config["budget"] == 8 and config["notes"] is True
+    assert (
+        config["mode"] == "live" and config["budget"] == DEFAULT_BUDGET and config["notes"] is True
+    )
 
     phased = Discovery(seed=9, lb="off", rounds=1)
     assert phased.mode == "phased"
     events = asyncio.run(Game(phased, ScriptClient(lambda *a: [])).play())
     assert events[-1]["type"] == "end"
+
+
+def test_slow_writers_act_less_often_than_terse_agents():
+    env = live_env(n_agents=3)
+    slow = env.agents[0]
+
+    def fn(agent, round_, step, messages, tools):
+        return [call("post_message", text=f"{agent} {step}")] if step < 6 else []
+
+    events = play(env, fn, tokens={slow: 200}, budget=6)  # 200 tokens = 10 virtual seconds
+    sequence = [e["agent"] for e in events if e["type"] == "model_call" and e["round"] == 1]
+    second_slow = [i for i, a in enumerate(sequence) if a == slow][1]
+    fast = next(a for a in env.agents if a != slow)
+    third_fast = [i for i, a in enumerate(sequence) if a == fast][2]
+    assert third_fast < second_slow  # a terse agent took three steps before the slow one took two
+    times = [e["t"] for e in events if e["type"] == "model_call" and e["agent"] == slow]
+    assert times[1] - times[0] >= 10
+
+
+def test_context_guard_ends_an_agents_round(monkeypatch):
+    monkeypatch.setattr(live, "MAX_CONTEXT_CHARS", 10)
+    events = play(live_env(), lambda *a: [call("post_message", text="hi")])
+    assert sum(e["type"] == "context_cap" for e in events) == 3
+    assert not any(e["type"] == "model_call" and e["round"] == 1 for e in events)
+
+
+def test_results_history_is_shown_in_later_rounds():
+    env = live_env(rounds=2)
+    prompts = {}
+
+    def fn(agent, round_, step, messages, tools):
+        if step == 0:
+            prompts[(agent, round_)] = messages[1]["content"]
+            truth = env.directory[env.question_schedule[round_][agent]]
+            return [call("submit_answer", birthday=truth)]
+        return []
+
+    play(env, fn)
+    agent = env.agents[0]
+    assert "(no rounds played yet)" in prompts[(agent, 1)]
+    assert "was correct (+1)." in prompts[(agent, 2)]
+    assert "total score 1" in prompts[(agent, 2)]
+
+
+def test_read_messageboard_returns_a_bounded_number_of_posts_by_default():
+    env = live_env(n_agents=2)
+    poster, reader = env.agents
+
+    def fn(agent, round_, step, messages, tools):
+        if agent == poster and step < 45:
+            return [call("post_message", text=f"m{step}")]
+        if agent == reader and step < 40:
+            return [call("read_notes")]
+        if agent == reader and step == 40:
+            return [call("read_messageboard")]
+        return []
+
+    events = play(env, fn, budget=60, tokens={reader: 100})
+    result = tool_events(events, agent=reader, tool="read_messageboard")[0]["result"]
+    assert "showing the latest 40 of" in result
