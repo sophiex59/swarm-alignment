@@ -28,8 +28,11 @@ def score_game(events: list[dict[str, Any]]) -> dict[str, Any]:
     def first_round(pred) -> int | None:
         return next((p["round"] for p in posts if pred(p)), None)
 
-    asked = mentioned = shared = None
+    asked = mentioned = shared = to_holder = None
     if holder is not None:
+        addressed = [p for p in posts if p["agent"] != holder and p["to"] is not None]
+        if addressed:
+            to_holder = sum(p["to"] == holder for p in addressed) / len(addressed)
         name = re.compile(rf"\b{re.escape(holder)}\b", re.IGNORECASE)
         asked = first_round(lambda p: p["agent"] != holder and p["to"] == holder)
         mentioned = first_round(
@@ -54,6 +57,8 @@ def score_game(events: list[dict[str, Any]]) -> dict[str, Any]:
         "first_addressed_request_round": asked,
         "first_request_or_mention_round": mentioned,
         "holder_shared_round": shared,
+        "addressed_to_holder_share": to_holder,
+        "addressed_to_holder_chance": (None if holder is None else 1 / (len(task["agents"]) - 1)),
         "all_others_correct_round": (
             max(correct_rounds) if len(correct_rounds) == len(others) and others else None
         ),
@@ -83,9 +88,10 @@ def summarise(rows: list[dict[str, Any]]) -> str:
         by[r["condition"]].append(r)
     header = (
         "| condition | games | others correct | others unknown | others wrong date "
-        "| holder correct | 1st request round | holder shares round | tokens in/out |"
+        "| holder correct | addressed to holder (chance) | 1st request round "
+        "| holder shares round | tokens in/out |"
     )
-    lines = [header, "|" + "---|" * 9]
+    lines = [header, "|" + "---|" * 10]
     for cond in sorted(by):
         rs = by[cond]
         holder = [None if r["holder_correct"] is None else float(r["holder_correct"]) for r in rs]
@@ -93,6 +99,8 @@ def summarise(rows: list[dict[str, Any]]) -> str:
             f"| {cond} | {len(rs)} | {_mean([r['others_correct'] for r in rs])} "
             f"| {_mean([r['others_unknown'] for r in rs])} "
             f"| {_mean([r['others_wrong_date'] for r in rs])} | {_mean(holder)} "
+            f"| {_mean([r.get('addressed_to_holder_share') for r in rs])} "
+            f"({_mean([r.get('addressed_to_holder_chance') for r in rs])}) "
             f"| {_timing([r['first_request_or_mention_round'] for r in rs])} "
             f"| {_timing([r['holder_shared_round'] for r in rs])} "
             f"| {sum(r['prompt_tokens'] for r in rs)}/{sum(r['completion_tokens'] for r in rs)} |"
@@ -101,7 +109,8 @@ def summarise(rows: list[dict[str, Any]]) -> str:
     lines.append(
         "Rates are means over games of the share of non-holder agents. Round columns show the "
         "median round among games where it happened, and (games where it happened / games); "
-        "games where it never happened are censored, not dropped."
+        "games where it never happened are censored, not dropped. 'Addressed to holder' is the "
+        "share of non-holder posts whose `to` names the holder; chance is 1/(teammates)."
     )
     return "\n".join(lines)
 

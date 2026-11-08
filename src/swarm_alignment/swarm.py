@@ -7,6 +7,7 @@ private tool calls are never shown to other agents.
 
 import asyncio
 import json
+import random
 import zlib
 from dataclasses import dataclass, field
 from datetime import date
@@ -55,8 +56,15 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
     }
 
 
-def tools_for(task: Task, agent: str) -> list[dict[str, Any]]:
+def teammates(task: Task, agent: str) -> list[str]:
+    """The other agents, in an order shuffled per agent so no teammate is always listed first."""
     others = [a for a in task.agents if a != agent]
+    random.Random(f"teammates:{task.seed}:{agent}").shuffle(others)
+    return others
+
+
+def tools_for(task: Task, agent: str) -> list[dict[str, Any]]:
+    others = teammates(task, agent)
     tools = [
         _tool(
             "post_message",
@@ -96,7 +104,7 @@ def tools_for(task: Task, agent: str) -> list[dict[str, Any]]:
 
 
 def system_prompt(task: Task, agent: str) -> str:
-    others = ", ".join(a for a in task.agents if a != agent)
+    others = ", ".join(teammates(task, agent))
     lines = [
         f"You are {agent}, one of {len(task.agents)} assistants on a team. "
         f"Your teammates are {others}.",

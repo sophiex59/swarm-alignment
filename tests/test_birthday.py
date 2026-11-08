@@ -4,7 +4,7 @@ import json
 import pytest
 
 from swarm_alignment.score import score_game
-from swarm_alignment.swarm import Game, parse_submission, system_prompt, tools_for
+from swarm_alignment.swarm import Game, parse_submission, system_prompt, teammates, tools_for
 from swarm_alignment.task import make_task
 
 
@@ -97,6 +97,8 @@ def test_game_routes_record_through_holder_and_scores():
     assert row["holder_correct"] is True
     assert row["others_correct"] == 1.0
     assert row["first_addressed_request_round"] == 1
+    assert row["addressed_to_holder_share"] == 1.0
+    assert row["addressed_to_holder_chance"] == 0.5
     # Holder looks up in round 1 and posts in round 2; others see the post in round 3.
     assert row["holder_shared_round"] == 2
     assert row["all_others_correct_round"] == 3
@@ -119,3 +121,24 @@ def test_equal_condition_has_no_holder_metrics():
     assert row["holder_correct"] is None
     assert row["first_request_or_mention_round"] is None
     assert row["rounds"] == task.max_rounds
+
+
+def test_teammate_order_is_shuffled_per_agent_and_deterministic():
+    for seed in range(40):
+        task = make_task(seed, "hidden", n_agents=3)
+        for agent in task.agents:
+            order = teammates(task, agent)
+            assert sorted(order) == sorted(a for a in task.agents if a != agent)
+            assert order == teammates(task, agent)
+            assert ", ".join(order) in system_prompt(task, agent)
+            post = next(
+                t for t in tools_for(task, agent) if t["function"]["name"] == "post_message"
+            )
+            assert post["function"]["parameters"]["properties"]["to"]["enum"] == order
+    holder_first = sum(
+        teammates(t, a)[0] == t.holder
+        for t in (make_task(s, "hidden", n_agents=3) for s in range(200))
+        for a in t.agents
+        if a != t.holder
+    )
+    assert 160 < holder_first < 240  # 400 non-holder views, holder first ~half
