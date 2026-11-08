@@ -9,11 +9,12 @@ Pacing: there is no clock. Each agent has an action budget per round and nothing
 and an agent that does too little in its budget simply scores less. A round is a series of laps;
 in each lap every agent still in the round takes one model step.
 
-- parallel laps (default): all agents step at the same time against the board as it stood when the
-  lap started. Their posts land together when the lap ends. Events are logged in the round's
-  seeded agent order, so logs and outcomes do not depend on which model call returned first.
-- sequential laps: agents step one at a time in the seeded order, and a later agent sees earlier
-  agents' posts from the same lap. About N times slower with N agents.
+- sequential laps (default): agents step one at a time in the seeded order, and a later agent
+  sees earlier agents' posts from the same lap.
+- parallel laps (optional, about N times faster with N agents): all agents step at the same
+  time against the board as it stood when the lap started. Their posts land together when the
+  lap ends. Events are logged in the round's seeded agent order, so logs and outcomes do not
+  depend on which model call returned first.
 """
 
 import asyncio
@@ -52,7 +53,7 @@ class LiveGame(Game):
         budget: int = DEFAULT_BUDGET,
         notes: bool = True,
         read_cost: int = 0,
-        parallel: bool = True,
+        parallel: bool = False,
     ):
         super().__init__(environment, client, board_window, model_params)
         self.parallel = parallel

@@ -94,9 +94,9 @@ def main() -> None:
     parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
     parser.add_argument(
         "--laps",
-        choices=("parallel", "sequential"),
-        default="parallel",
-        help="live: agents step at the same time each lap (parallel) or one after another",
+        choices=("sequential", "parallel"),
+        default="sequential",
+        help="live: agents step one after another (default) or all at once each lap",
     )
     parser.add_argument(
         "--thinking",

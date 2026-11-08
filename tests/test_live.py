@@ -68,7 +68,7 @@ def test_sequential_laps_show_earlier_posts_within_a_lap():
             return [call("post_message", text=f"hello from {agent}"), call("read_messageboard")]
         return []
 
-    events = play(env, fn, budget=4, parallel=False)
+    events = play(env, fn, budget=4)
     order = [e["agent"] for e in events if e["type"] == "model_call"][: len(env.agents)]
     assert sorted(order) == sorted(env.agents)
     for position, agent in enumerate(order):
@@ -489,7 +489,7 @@ def test_parallel_laps_land_posts_at_the_end_of_the_lap():
             return [call("read_messageboard")]
         return []
 
-    events = play(env, fn, budget=4)
+    events = play(env, fn, budget=4, parallel=True)
     for agent in env.agents:
         first, second = [
             e["result"] for e in tool_events(events, agent=agent, tool="read_messageboard")
@@ -497,8 +497,8 @@ def test_parallel_laps_land_posts_at_the_end_of_the_lap():
         assert "hello from" not in first  # nobody's post, not even its own, is visible mid-lap
         assert second.count("hello from") == len(env.agents)
     assert events[0]["laps"] == "parallel"
-    assert "TIMING." in LiveGame(env, ScriptClient(lambda *a: []))._rules_text()
-    assert "TIMING." not in LiveGame(env, ScriptClient(lambda *a: []), parallel=False)._rules_text()
+    assert "TIMING." in LiveGame(env, ScriptClient(lambda *a: []), parallel=True)._rules_text()
+    assert "TIMING." not in LiveGame(env, ScriptClient(lambda *a: []))._rules_text()
 
 
 def test_parallel_laps_are_deterministic_when_calls_finish_in_random_order():
@@ -522,7 +522,7 @@ def test_parallel_laps_are_deterministic_when_calls_finish_in_random_order():
             return await super().complete(messages, tools, seed)
 
     runs = [
-        asyncio.run(LiveGame(live_env(rounds=2), JitterClient(fn, jitter)).play())
+        asyncio.run(LiveGame(live_env(rounds=2), JitterClient(fn, jitter), parallel=True).play())
         for jitter in (1, 2, 3)
     ]
     assert runs[0] == runs[1] == runs[2]
