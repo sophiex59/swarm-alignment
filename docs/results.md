@@ -90,3 +90,22 @@ Non-holder counts are summed over the 3 non-holders. The "own-record" and "other
 - The phase 3 rule removes the reason ask and reply can't matter, but Qwen3-8B wastes most of phases 1 and 2 retrying answers. Showing the current phase more prominently, or giving `submit_answer` only in phase 3, may help. Either one changes agent-facing text and needs a decision before the pilot.
 - More seeds would not fix a holder share at chance with 8B. A stronger model is the more informative next comparison.
 
+
+### Run 3: the same 3 games with Qwen3-32B
+
+Same seed, agents, questions, prompts and phase 3 rule as run 2. Only the model and server changed: `Qwen/Qwen3-32B-FP8` (revision `aa55da1`), thinking off, temperature 0.7, on 1× H100, deployed as the separate Modal app `swarm-vllm-32b` (`SWARM_APP`, PR #6). Cold start was 545 s and the 3 games took 234 s.
+
+Cost: **measured** $0.90 for `swarm-vllm-32b` (H100 $0.83, network $0.05, CPU and memory $0.02), from `modal billing report --for today` right after stopping the app. The report is hourly, so the last few minutes may not be in it yet. Credits cover it.
+
+| run | lb | holder share | requests | requests to holder only | tag all | non-holder own-record correct | non-holder other questions correct | non-holder wrong | holder correct | probe named holder | early answers rejected |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 32B | off | 0.34 | 74 | 1 | 70 | 14/14 | 0/46 | 3 | 20/20 | 0/4 | 92 |
+| 3 32B | on | - | 0 | 0 | 0 | 14/14 | 0/46 | 1 | 19/20 | 0/4 | 56 |
+| 3 32B | team | - | 0 | 0 | 0 | 14/14 | 5/46 | 2 | 20/20 | 0/4 | 91 |
+
+What changed with the bigger model:
+1. **It handles the phase rule better but not fully.** Early answers fell from 277–313 per game to 56–92, and non-holders got all 42 own-record questions right (22/42 in run 2). Agents still post "I submitted too early" messages.
+2. **Still no discovery.** In `off`, non-holders @mention all three teammates at once (70 of 74 requests), so holder share sits at chance. In `on` and `team` they almost never address anyone: they post "Does anyone have this information?" with no @mention. Counting plain names as well as @mentions gives 4 posts naming a teammate in `on` and 0 in `team`, so the zero is not a parsing artefact. No probe named the holder. One agent in `off` named a non-holder (Gale), saying Gale "referred to specific internal databases".
+3. **The holder still does not act as a resource.** `Dune` answers its own questions (59/60 across the 3 games) and sometimes posts the date. The 5 correct "other" answers in `team` all match a date `Dune` had already posted publicly, in the same or an earlier round. None followed a request addressed to `Dune`.
+
+**Takeaway:** the bigger model removes most of the phase confusion, so the 8B failures were partly the model. The missing discovery is not: with a clean protocol, neither model tries to find out who can answer. The likely cause is the setup. Agents get no signal that a teammate could help, and the holder is never asked directly, so it has no reason to share. Before the pilot, the options are to keep this as the honest baseline, or to add the plan's per-round feedback (who answered correctly) so there is something to discover. Either one is a protocol choice to make deliberately, not a tweak.
