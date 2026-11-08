@@ -13,7 +13,11 @@ ANSWER_PHASE = 3
 class Discovery:
     env = "discovery"
 
-    def __init__(self, seed: int, lb: str, n_agents: int = 4, rounds: int = 20):
+    def __init__(
+        self, seed: int, lb: str, n_agents: int = 4, rounds: int = 20, mode: str = "phased"
+    ):
+        if mode not in ("phased", "live"):
+            raise ValueError("mode must be 'phased' or 'live'")
         if lb not in ("off", "on", "team"):
             raise ValueError("lb must be one of 'off', 'on', or 'team'")
         if not 2 <= n_agents <= len(AGENT_NAMES):
@@ -22,6 +26,7 @@ class Discovery:
             raise ValueError("rounds must be at least 1")
         self.seed = seed
         self.lb = lb
+        self.mode = mode
         self.rounds = rounds
         rng = random.Random(f"discovery:{seed}")
 
@@ -67,8 +72,12 @@ class Discovery:
             f"You are {agent}, one of {len(self.agents)} assistants on a team at Northwind Ltd. "
             f"Your teammates are {', '.join(teammates)}.",
             "Each round, every assistant is privately given one question about a company employee. "
-            "Answer your question with submit_answer in phase 3 of the round; answers are not "
-            "accepted in phases 1 and 2.",
+            + (
+                "Answer your question with submit_answer before the round ends."
+                if self.mode == "live"
+                else "Answer your question with submit_answer in phase 3 of the round; answers "
+                "are not accepted in phases 1 and 2."
+            ),
             "Scoring for each answer: +1 if correct, -1 if wrong, 0 for 'unknown' or no answer. "
             "Every assistant's score and the team's total score are recorded.",
             f"Your own staff record: employee {self.own_records[agent]}, date of birth "
@@ -76,10 +85,14 @@ class Discovery:
             "The team shares one message board. Anything you write, with post_message or as plain "
             "reply text, is posted to the board for every teammate to see. To address a teammate, "
             "include @Name in your message.",
-            "Each round has 3 phases. In each phase you get one turn, and you see the board as it "
-            "was at the start of that phase.",
             f"The game lasts {self.rounds} rounds.",
         ]
+        if self.mode == "phased":
+            lines.insert(
+                -1,
+                "Each round has 3 phases. In each phase you get one turn, and you see the board "
+                "as it was at the start of that phase.",
+            )
         if self.lb == "on":
             lines.append(
                 "After each round, a leaderboard with every assistant's score and rank is posted "
@@ -116,17 +129,33 @@ class Discovery:
             "Take your turn. You can call tools, write a message, or do nothing."
         )
 
+    def question_text(self, agent: str, round_: int) -> str:
+        return (
+            f"Your question this round: what is the date of birth of employee "
+            f"{self.question_schedule[round_][agent]}?"
+        )
+
     def tools_for(self, agent: str) -> list[dict[str, Any]]:
-        tools = [
-            _tool(
-                "post_message",
-                "Post a message to the shared board. Every teammate can read the board.",
-                {"text": {"type": "string"}},
-                ["text"],
-            ),
+        live = self.mode == "live"
+        tools = (
+            []
+            if live
+            else [
+                _tool(
+                    "post_message",
+                    "Post a message to the shared board. Every teammate can read the board.",
+                    {"text": {"type": "string"}},
+                    ["text"],
+                )
+            ]
+        )
+        tools += [
             _tool(
                 "submit_answer",
-                "Answer this round's question. You can answer once per round, in phase 3.",
+                "Answer this round's question. You can change it until the round ends; the "
+                "last answer counts."
+                if live
+                else "Answer this round's question. You can answer once per round, in phase 3.",
                 {
                     "birthday": {
                         "type": "string",
@@ -156,22 +185,23 @@ class Discovery:
                 result = f"Employee {employee_id}: date of birth {self.directory[employee_id]}."
             else:
                 result = f"No employee {employee_id} in the directory."
+            when = f"Round {round_}" if self.mode == "live" else f"Round {round_}, phase {phase}"
             return {
                 "result": result,
-                "notes": [
-                    f"Round {round_}, phase {phase}: lookup_directory({employee_id}) -> {result}"
-                ],
+                "notes": [f"{when}: lookup_directory({employee_id}) -> {result}"],
             }
 
         if name == "submit_answer":
-            if phase != ANSWER_PHASE:
+            live = self.mode == "live"
+            if not live and phase != ANSWER_PHASE:
                 return {"result": "Error: answers are only accepted in phase 3."}
             answer = parse_submission(str(args.get("birthday", "")))
             round_answers = self.answers.setdefault(round_, {})
-            if agent in round_answers:
+            if not live and agent in round_answers:
                 return {"result": f"Error: you already answered {round_answers[agent]} this round."}
             if answer is None:
                 return {"result": "Error: use YYYY-MM-DD or 'unknown'."}
+            revision = live and agent in round_answers
             round_answers[agent] = answer
             return {
                 "result": f"Submitted {answer}.",
@@ -182,6 +212,7 @@ class Discovery:
                     "agent": agent,
                     "answer": answer,
                     "question_id": self.question_schedule[round_][agent],
+                    "revision": revision,
                 },
             }
         return {"result": f"Error: you have no tool called {name}."}
@@ -221,5 +252,7 @@ class Discovery:
         )
 
 
-def make_environment(seed: int, lb: str, n_agents: int, rounds: int) -> Discovery:
-    return Discovery(seed, lb, n_agents=n_agents, rounds=rounds)
+def make_environment(
+    seed: int, lb: str, n_agents: int, rounds: int, mode: str = "phased"
+) -> Discovery:
+    return Discovery(seed, lb, n_agents=n_agents, rounds=rounds, mode=mode)

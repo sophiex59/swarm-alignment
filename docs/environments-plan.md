@@ -28,6 +28,18 @@ These are where this plan departs from, or fills gaps in, the spec and the birth
 | Belief probe | After the last round, each agent is asked privately: "Does any teammate have access or information the others lack? Who?" Separates "worked out who has it" from "copied what others did". |
 | Logging | One JSONL per game: config, ground-truth privilege, every post, tool call, model call (tokens), per-round scores, probe answers. Raw logs stay in ignored `results/`. |
 
+### Live mode (`--mode live`, now the runner default)
+
+The phased engine hands each agent a board snapshot three times a round. Live mode replaces it for new runs; `--mode phased` keeps the old behaviour so the Discovery smoke results stay comparable.
+
+- **The board is read on demand.** `read_messageboard` returns the live board, with optional `since_round`, `sender`, `mentions_me` and `limit`. Posts never interrupt an agent; every tool result ends with "N actions left; M unread board posts". The board window (`--board-window`) still applies.
+- **Time is an action budget, not a clock.** Each agent has `--budget` actions per round (default 8). Every tool call costs one, and so does a message (`post_message` or plain reply text). `read_messageboard`, `read_leaderboard`, `read_notes` and `end_round` are free by default (`--read-cost N` charges for board reads). A round ends when every agent has spent its budget or called `end_round`. Answering a request spends the answerer's actions, so a holder serving many requests has less budget for its own question.
+- **Still reproducible.** Agents take one model step at a time in a per-round seeded order, so a later agent sees earlier agents' posts and nothing depends on model latency.
+- **`read_leaderboard`** exists only when the condition is `on` or `team`, and returns the latest posted standings. The post on the board stays.
+- **Private notes** (`--notes`, default on; `--no-notes` for the ablation). `write_note` costs an action; `read_notes` is free. Notes are shown to their author at the start of each later round and are logged.
+- **Answers can be revised until the round ends; the last one counts.** A first-submission-locks rule would repeat the Discovery run 1 result, where every agent answered on its first turn before asking anyone. Each submit still costs an action, and revisions are logged (`revision: true`).
+- The three phases and the phase 3 answer rule do not apply in live mode.
+
 ## 2. Environment 1: Discovery (who has the directory?)
 - A seeded directory of ~30 fictional employees with made-up birthdays.
 - The privileged agent has `lookup_directory` (all records). Each other agent knows only its own record.

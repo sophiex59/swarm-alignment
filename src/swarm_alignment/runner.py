@@ -11,12 +11,15 @@ from typing import Any
 
 from swarm_alignment.client import OpenAIChatClient
 from swarm_alignment.engine.game import Game
+from swarm_alignment.engine.live import DEFAULT_BUDGET, LiveGame
 from swarm_alignment.run import parse_seeds, wait_for_health
 
 
-def make_environment(env: str, seed: int, lb: str, n_agents: int, rounds: int) -> Any:
+def make_environment(
+    env: str, seed: int, lb: str, n_agents: int, rounds: int, mode: str = "phased"
+) -> Any:
     module = importlib.import_module(f"swarm_alignment.envs.{env}")
-    return module.make_environment(seed, lb, n_agents, rounds)
+    return module.make_environment(seed, lb, n_agents, rounds, mode)
 
 
 async def run_all(
@@ -31,15 +34,27 @@ async def run_all(
         path = out / f"{args.env}-{lb}-{seed:03d}.jsonl"
         if path.exists():
             return
-        environment = make_environment(args.env, seed, lb, args.n_agents, args.rounds)
-        async with semaphore:
-            start = time.monotonic()
-            events = await Game(
+        environment = make_environment(args.env, seed, lb, args.n_agents, args.rounds, args.mode)
+        if args.mode == "live":
+            game: Game = LiveGame(
                 environment,
                 client,
                 board_window=args.board_window,
                 model_params=model_params,
-            ).play()
+                budget=args.budget,
+                notes=args.notes,
+                read_cost=args.read_cost,
+            )
+        else:
+            game = Game(
+                environment,
+                client,
+                board_window=args.board_window,
+                model_params=model_params,
+            )
+        async with semaphore:
+            start = time.monotonic()
+            events = await game.play()
             events[-1]["wall_seconds"] = round(time.monotonic() - start, 2)
         temporary = path.with_suffix(".tmp")
         temporary.write_text("".join(json.dumps(event) + "\n" for event in events))
@@ -57,6 +72,19 @@ def main() -> None:
     parser.add_argument("--n-agents", type=int, default=4)
     parser.add_argument("--rounds", type=int, default=20)
     parser.add_argument("--board-window", type=int, default=5)
+    parser.add_argument(
+        "--mode",
+        choices=("live", "phased"),
+        default="live",
+        help="live: read the board any time, action budget per round. phased: 3 fixed phases.",
+    )
+    parser.add_argument(
+        "--budget", type=int, default=DEFAULT_BUDGET, help="actions per round (live)"
+    )
+    parser.add_argument(
+        "--notes", action=argparse.BooleanOptionalAction, default=True, help="private notes (live)"
+    )
+    parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
     parser.add_argument("--base-url", default=os.environ.get("SWARM_BASE_URL"))
     parser.add_argument("--api-key-env", default="VLLM_API_KEY")
     parser.add_argument("--model", default="llm")
@@ -75,6 +103,10 @@ def main() -> None:
         parser.error("--rounds must be at least 1")
     if args.board_window < 1:
         parser.error("--board-window must be at least 1")
+    if args.budget < 1:
+        parser.error("--budget must be at least 1")
+    if args.read_cost < 0:
+        parser.error("--read-cost must be at least 0")
 
     args.out.mkdir(parents=True, exist_ok=True)
     waited = wait_for_health(args.base_url)
