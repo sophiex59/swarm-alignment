@@ -94,6 +94,11 @@ def requests_to_holder(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     holder_posts = [
         e for e in events if e["type"] == "post" and e["agent"] == holder and e.get("via") == "tool"
     ]
+
+    def when(e: dict[str, Any]) -> float:
+        # Asynchronous rounds stamp real time; lap-based rounds are ordered by step number.
+        return e["t"] if "t" in e else e["tick"]
+
     out = []
     for event in events:
         if event["type"] == "post" and event["agent"] != holder and holder in event["mentions"]:
@@ -102,7 +107,7 @@ def requests_to_holder(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     p
                     for p in holder_posts
                     if p["round"] == event["round"]
-                    and p["tick"] > event["tick"]
+                    and when(p) > when(event)
                     and event["agent"] in p["mentions"]
                 ),
                 None,
@@ -119,6 +124,11 @@ def requests_to_holder(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "laps_to_answer": (
                         reply["lap"] - event["lap"]
                         if reply is not None and reply.get("lap") and event.get("lap")
+                        else None
+                    ),
+                    "seconds_to_answer": (
+                        round(reply["t"] - event["t"], 1)
+                        if reply is not None and "t" in reply and "t" in event
                         else None
                     ),
                 }

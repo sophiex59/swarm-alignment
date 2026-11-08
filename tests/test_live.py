@@ -671,3 +671,108 @@ def test_round_ends_early_when_everyone_waits_and_end_round_is_not_woken():
     events = play(env, fn, laps=8)
     assert sum(e["type"] == "model_call" and e["agent"] == leaver for e in events) == 1
     assert not any(e["type"] == "wake" and e["agent"] == leaver for e in events)
+
+
+# ---- asynchronous rounds -------------------------------------------------------------------
+
+
+class SleepClient(ScriptClient):
+    """Pauses on every call, the way a real network call yields to other agents."""
+
+    def __init__(self, fn, delay=0.002):
+        super().__init__(fn)
+        self.delay = delay
+
+    async def complete(self, messages, tools, seed):
+        await asyncio.sleep(self.delay)
+        return await super().complete(messages, tools, seed)
+
+
+def play_async(env, fn, delay=0.002, **kwargs):
+    kwargs.setdefault("round_seconds", 5)
+    game = LiveGame(env, SleepClient(fn, delay), asynchronous=True, **kwargs)
+    return asyncio.run(game.play())
+
+
+def test_async_islands_run_at_the_same_time_and_the_board_is_live():
+    env = live_env(rounds=2)
+
+    def fn(agent, round_, step, messages, tools):
+        if step == 0:
+            return [call("post_message", text=f"hi from {agent} r{round_}")]
+        if step == 1:
+            return [call("read_messageboard", since_round=round_)]
+        return [call("end_round")]
+
+    events = play_async(env, fn)
+    assert events[0]["turn_order"] == "async" and events[0]["round_seconds"] == 5
+    for round_ in (1, 2):
+        reads = [e for e in tool_events(events, tool="read_messageboard") if e["round"] == round_]
+        assert len(reads) == len(env.agents)
+        for read in reads:  # every agent posted before anyone read, so all posts are visible
+            assert all(f"hi from {a} r{round_}" in read["result"] for a in env.agents)
+        end = next(e for e in events if e["type"] == "round_end" and e["round"] == round_)
+        assert set(end["stopped"].values()) == {"left"}
+    assert all("t" in e for e in events if e["type"] in ("model_call", "post", "tool"))
+
+
+def test_async_waiting_agent_is_woken_by_a_mention_and_the_round_ends_early():
+    env = live_env(n_agents=2)
+    holder, asker = env.agents
+
+    def fn(agent, round_, step, messages, tools):
+        last = messages[-1]["content"]
+        if agent == holder:
+            if step == 0:
+                return [call("wait")]
+            if "You were waiting and a teammate mentioned you" in last:
+                return [call("post_message", text=f"@{asker} it is 1970-01-01"), call("end_round")]
+            return [call("end_round")]
+        if step == 0:
+            return [call("check_actions")]
+        if step == 1:
+            return [call("post_message", text=f"@{holder} what is E-1?"), call("wait")]
+        if "it is 1970-01-01" in last:
+            return [call("submit_answer", birthday="1970-01-01"), call("end_round")]
+        return [call("wait")]
+
+    events = play_async(env, fn, round_seconds=30)
+    assert [e["agent"] for e in events if e["type"] == "wake"] == [holder, asker]
+    reply = next(e for e in events if e["type"] == "post" and e["agent"] == holder)
+    ask = next(e for e in events if e["type"] == "post" and e["agent"] == asker)
+    assert reply["t"] >= ask["t"]
+    end = next(e for e in events if e["type"] == "round_end")
+    assert end["stopped"] == {holder: "left", asker: "left"}
+    assert end["seconds"] < 2  # did not sit out the 30 seconds
+
+
+def test_async_round_ends_when_everyone_is_waiting():
+    events = play_async(live_env(), lambda a, r, step, m, t: [call("wait")], round_seconds=30)
+    end = next(e for e in events if e["type"] == "round_end")
+    assert set(end["stopped"].values()) == {"quiet"} and end["seconds"] < 2
+
+
+def test_async_time_and_model_call_caps():
+    always = lambda a, r, step, m, t: [call("check_actions")]  # noqa: E731
+    events = play_async(live_env(), always, delay=0.05, round_seconds=0.3)
+    end = next(e for e in events if e["type"] == "round_end")
+    assert set(end["stopped"].values()) == {"time"}
+    assert all(2 <= n <= 8 for n in end["model_calls"].values())
+    first = tool_events(events, tool="check_actions")[0]["result"]
+    assert first.startswith("You have 0m 0") and "left this round" in first
+
+    events = play_async(live_env(), always, max_model_calls=3)
+    end = next(e for e in events if e["type"] == "round_end")
+    assert set(end["stopped"].values()) == {"call_limit"}
+    assert set(end["model_calls"].values()) == {3}
+
+
+def test_async_rules_and_validation():
+    env = live_env()
+    rules = LiveGame(env, ScriptClient(lambda *a: []), asynchronous=True)._rules_text()
+    assert "up to 5 minutes of real time" in rules and "each at your own pace" in rules
+    assert "WAITING." in rules and "MESSAGES TO YOU." in rules
+    with pytest.raises(ValueError):
+        LiveGame(env, ScriptClient(lambda *a: []), asynchronous=True, budget=10)
+    with pytest.raises(ValueError):
+        LiveGame(env, ScriptClient(lambda *a: []), asynchronous=True, parallel=True)

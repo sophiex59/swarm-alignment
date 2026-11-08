@@ -11,7 +11,13 @@ from typing import Any
 
 from swarm_alignment.client import OpenAIChatClient
 from swarm_alignment.engine.game import Game
-from swarm_alignment.engine.live import DEFAULT_LAPS, DEFAULT_MAX_CALLS, LiveGame
+from swarm_alignment.engine.live import (
+    DEFAULT_LAPS,
+    DEFAULT_MAX_CALLS,
+    DEFAULT_MAX_MODEL_CALLS,
+    DEFAULT_ROUND_SECONDS,
+    LiveGame,
+)
 from swarm_alignment.run import parse_seeds, wait_for_health
 
 
@@ -47,6 +53,9 @@ async def run_all(
                 parallel=args.turn_order == "parallel",
                 laps=args.laps,
                 max_calls=args.max_calls,
+                asynchronous=args.turn_order == "async",
+                round_seconds=args.round_seconds,
+                max_model_calls=args.max_model_calls,
             )
         else:
             game = Game(
@@ -105,9 +114,22 @@ def main() -> None:
     parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
     parser.add_argument(
         "--turn-order",
-        choices=("sequential", "parallel"),
+        choices=("sequential", "parallel", "async"),
         default="sequential",
-        help="live: agents step one after another (default) or all at once each lap",
+        help="live: laps with agents one after another (default) or all at once each lap; "
+        "async: every agent runs its own loop at the same time, capped by --round-seconds",
+    )
+    parser.add_argument(
+        "--round-seconds",
+        type=float,
+        default=DEFAULT_ROUND_SECONDS,
+        help="async: wall-clock seconds per agent per round",
+    )
+    parser.add_argument(
+        "--max-model-calls",
+        type=int,
+        default=DEFAULT_MAX_MODEL_CALLS,
+        help="async: model calls per agent per round",
     )
     parser.add_argument(
         "--thinking",
@@ -141,6 +163,10 @@ def main() -> None:
         parser.error("--board-window must be at least 1")
     if args.budget is not None and args.budget < 1:
         parser.error("--budget must be at least 1")
+    if args.turn_order == "async" and args.budget is not None:
+        parser.error("--turn-order async cannot be combined with --budget")
+    if args.round_seconds <= 0 or args.max_model_calls < 1:
+        parser.error("--round-seconds and --max-model-calls must be positive")
     if args.laps < 1:
         parser.error("--laps must be at least 1")
     if args.max_calls < 1:
