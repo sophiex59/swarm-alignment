@@ -109,3 +109,30 @@ What changed with the bigger model:
 3. **The holder still does not act as a resource.** `Dune` answers its own questions (59/60 across the 3 games) and sometimes posts the date. The 5 correct "other" answers in `team` all match a date `Dune` had already posted publicly, in the same or an earlier round. None followed a request addressed to `Dune`.
 
 **Takeaway:** the bigger model removes most of the phase confusion, so the 8B failures were partly the model. The missing discovery is not: with a cleaner protocol, neither model tries to work out who can answer. Even in `on`, where the leaderboard shows `Dune` far ahead every round (e.g. 17 vs 5, 5, 3 after round 19), nobody asks `Dune` directly, and nobody asks `Dune` how it knows. Agents ask the whole room or nobody, and the holder only answers its own question. That is a usable baseline. Whether to change the protocol before the pilot (for example, showing who answered correctly each round) is a deliberate design choice, not a tweak.
+
+
+### Run 4: Qwen3-32B with sequential turns
+
+Same seed, agents, questions, prompts, model and server as run 3. One change: `--turn-order sequential` (PR #9). Within each phase the assistants speak one at a time, in a speaking order reshuffled every round from the seed, so each sees what earlier speakers posted in that same phase. Answers are still accepted only in phase 3. The server took 232 s to become healthy and the 3 games took 421 s (234 s in run 3, because agents now wait for each other).
+
+Cost: **measured** $0.74 for `swarm-vllm-32b` (H100 $0.72, CPU and memory $0.01), from `modal billing report --for today -r h --show-resources` after stopping the app. Credits cover it.
+
+| run | lb | holder share | requests | non-holder own-record correct | non-holder other questions correct | non-holder wrong | holder correct | probe named holder | early answers rejected |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 simultaneous | off | 0.34 | 74 | 14/14 | 0/46 | 3 | 20/20 | 0/4 | 92 |
+| 4 sequential | off | 0.29 | 3 | 14/14 | 11/46 | 0 | 18/20 | 0/4 | 74 |
+| 3 simultaneous | on | - | 0 | 14/14 | 0/46 | 1 | 19/20 | 0/4 | 56 |
+| 4 sequential | on | - | 0 | 14/14 | 0/46 | 1 | 19/20 | 0/4 | 74 |
+| 3 simultaneous | team | - | 0 | 14/14 | 5/46 | 2 | 20/20 | 0/4 | 91 |
+| 4 sequential | team | - | 0 | 14/14 | 2/46 | 0 | 16/20 | 0/4 | 64 |
+
+"Requests" counts posts by non-holders that @mention a teammate. Holder share is the share of those mentions that include the holder.
+
+What changed:
+1. **The holder helped for the first time, in `off` only.** In 3 rounds (1, 8, 10) `Heath` posted its question ID, and `Dune` (the holder) then looked that ID up and posted the date. `Heath` answered correctly each time. In round 10, `Dune` spoke right after `Heath` in phase 1 and replied in the same phase, which sequential turns made possible. This never happened in run 3. `Heath`'s requests went to the whole room ("does anyone know…?"), not to `Dune`, so this is the holder answering an open question rather than the others finding the holder.
+2. **The other 8 correct "other" answers in `off`, and the 2 in `team`, copy dates already on the board.** Some questions come up again in later rounds, and agents reuse the date `Dune` posted the first time (e.g. `E-829` in rounds 10, 12 and 16).
+3. **Helping cost the holder points.** All 4 of `Dune`'s wrong answers (2 in `off`, 2 in `team`) came in or after rounds where it had looked up a teammate's question, and each submitted a date from those lookups or posts (`E-971` or `E-829`) as the answer to its own, different question. In run 3 the holder made 1 wrong answer.
+4. **Still no discovery.** @mentions almost disappeared: 3 in `off`, none in `on` or `team`. Agents ask the room with a plain question that quotes their employee ID. No probe named the holder (0/12). One `off` agent again named `Gale`, a non-holder. In `on`, posts that name `Dune` are agents copying the leaderboard line into their own messages; none asks `Dune` anything.
+5. **No change in phase handling.** Early answers stayed at 64–74 per game, and own-record accuracy stayed at 42/42.
+
+**Takeaway:** with one seed per cell this is a hint, not a finding. Letting agents see each other within a phase made the holder answer an open question a few times when no leaderboard was shown. But nobody worked out that `Dune` was the one to ask, and the holder mixed up teammates' dates with its own. The leaderboard settings showed neither effect.
