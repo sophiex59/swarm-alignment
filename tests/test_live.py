@@ -124,7 +124,7 @@ def test_budget_limits_costly_calls_and_read_cost_is_configurable():
 
 def test_content_only_reply_is_posted_and_costs_one_action():
     env = live_env()
-    events = play(env, lambda agent, r, step, m, t: "just chatting" if step < 5 else [], budget=2)
+    events = play(env, lambda agent, r, step, m, t: f"chat {step}" if step < 5 else [], budget=2)
     for agent in env.agents:
         posts = [e for e in events if e["type"] == "post" and e["agent"] == agent]
         assert len(posts) == 2
@@ -336,3 +336,83 @@ def test_rules_only_list_tools_that_exist():
     assert "read_leaderboard" not in off and "read_notes" not in off
     on = LiveGame(live_env(lb="on"), ScriptClient(lambda *a: []))._rules_text()
     assert "Free: read_messageboard, read_leaderboard, read_notes, check_actions, end_round" in on
+
+
+def test_filtered_read_does_not_hide_unread_posts():
+    env = live_env(n_agents=2)
+    a, b = env.agents
+    footers = []
+
+    def fn(agent, round_, step, messages, tools):
+        if agent == a:
+            return [call("post_message", text="E-1 was born 1970-01-01")] if step == 0 else []
+        if step == 0:
+            return [call("check_actions")]
+        if step == 1:
+            return [call("read_messageboard", mentions_me=True)]
+        if step == 2:
+            footers.append(messages[-1]["content"])
+            return [call("read_messageboard")]
+        if step == 3:
+            footers.append(messages[-1]["content"])
+        return []
+
+    play(env, fn)
+    after_filtered, after_full = footers
+    assert "(no posts)" in after_filtered and "1 unread board posts]" in after_filtered
+    assert "1970-01-01" in after_full and "0 unread board posts]" in after_full
+
+
+def test_duplicate_posts_are_rejected_but_cost_an_action():
+    env = live_env(n_agents=2)
+
+    def fn(agent, round_, step, messages, tools):
+        if step < 3:
+            return [call("post_message", text="same")]
+        return []
+
+    events = play(env, fn, budget=5)
+    for agent in env.agents:
+        posts = [e for e in events if e["type"] == "post" and e["agent"] == agent]
+        assert len(posts) == 1
+        results = [e for e in tool_events(events, agent=agent, tool="post_message")]
+        assert [r["actions_left"] for r in results] == [4, 3, 2]
+        assert "already posted exactly this message" in results[1]["result"]
+    assert sum(e["type"] == "duplicate_post" for e in events) == 4
+
+
+class ProbeClient(ScriptClient):
+    def __init__(self, replies):
+        super().__init__(lambda *a: [])
+        self.replies = replies
+
+    async def complete(self, messages, tools, seed):
+        if messages[1]["content"].startswith("The game is over."):
+            agent = messages[0]["content"].split(",")[0].removeprefix("You are ")
+            assert tools == []
+            assert "tools are disabled" in messages[0]["content"]
+            return {"content": self.replies[agent], "tool_calls": [], "usage": {}}
+        return await super().complete(messages, tools, seed)
+
+
+def test_probe_answers_are_parsed():
+    env = live_env()
+    a, b, c = env.agents
+    replies = {
+        a: f"{b}, they always knew the dates.",
+        b: "No. Everyone was equal.",
+        c: "submit_answer no",
+    }
+    events = asyncio.run(LiveGame(env, ProbeClient(replies)).play())
+    probes = {e["agent"]: e for e in events if e["type"] == "probe"}
+    assert probes[a]["verdict"] == "named" and probes[a]["named"] == [b]
+    assert probes[b]["verdict"] == "no"
+    assert probes[c]["verdict"] == "unparsed"
+
+
+def test_live_prompt_says_submit_answer_is_for_your_own_question():
+    env = live_env()
+    agent = env.agents[0]
+    assert "only answers your own question" in env.system_prompt(agent)
+    submit = next(t for t in env.tools_for(agent) if t["function"]["name"] == "submit_answer")
+    assert "never a teammate's" in submit["function"]["description"]

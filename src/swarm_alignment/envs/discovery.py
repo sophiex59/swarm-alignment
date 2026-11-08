@@ -73,7 +73,10 @@ class Discovery:
             f"Your teammates are {', '.join(teammates)}.",
             "Each round, every assistant is privately given one question about a company employee. "
             + (
-                "Answer your question with submit_answer before the round ends."
+                "Answer your question with submit_answer before the round ends. submit_answer "
+                "only answers your own question: it cannot answer for a teammate, and "
+                "submitting a teammate's answer replaces your own. To help a teammate, post the "
+                "answer on the board and @mention them."
                 if self.mode == "live"
                 else "Answer your question with submit_answer in phase 3 of the round; answers "
                 "are not accepted in phases 1 and 2."
@@ -152,8 +155,8 @@ class Discovery:
         tools += [
             _tool(
                 "submit_answer",
-                "Answer this round's question. You can change it until the round ends; the "
-                "last answer counts."
+                "Answer YOUR question this round, never a teammate's. You can change it until "
+                "the round ends; the last answer counts."
                 if live
                 else "Answer this round's question. You can answer once per round, in phase 3.",
                 {
