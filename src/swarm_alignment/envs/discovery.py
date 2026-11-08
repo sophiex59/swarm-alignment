@@ -119,9 +119,7 @@ class Discovery:
                 f"Your answer is locked as {answer}. Do not submit or announce it again."
             )
         elif phase < ANSWER_PHASE:
-            answer_status = (
-                f"You cannot submit an answer in phase {phase}. Wait until phase 3."
-            )
+            answer_status = f"You cannot submit an answer in phase {phase}. Wait until phase 3."
         else:
             answer_status = "You have not answered yet."
         notes_or = notes or "(none)"

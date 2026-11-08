@@ -40,6 +40,16 @@ Qwen3 thinking is disabled for model calls. This keeps reasoning out of public b
 
 Use a separate output directory when changing run settings. Existing game logs are skipped by filename, even if the settings differ; resume checks are not yet tied to a run manifest.
 
+## Watch a game in the browser
+
+Start the local dashboard in a second terminal. It reads completed and in-progress JSONL logs from `results/` and refreshes every two seconds:
+
+```bash
+uv run python -m swarm_alignment.ui --results results
+```
+
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765), then start or continue a runner command in another terminal. To watch logs in a different directory, pass that directory to both `--results` here and `--out` on the runner. The dashboard shows the shared board, agent-visible board window, latest scores, private tool activity, and end-game probes. It is a local read-only researcher view; private lookups and probes are not shown as public board posts.
+
 ## Score logs
 
 ```bash

@@ -215,9 +215,7 @@ def main() -> None:
         config = {key: value for key, value in vars(args).items() if key != "out"}
         config["out"] = str(args.out)
         config["health_wait_seconds"] = round(waited, 1)
-        (args.out / f"config-{int(time.time())}.json").write_text(
-            json.dumps(config, indent=2)
-        )
+        (args.out / f"config-{int(time.time())}.json").write_text(json.dumps(config, indent=2))
         start = time.monotonic()
         await run_all(args, client, args.out, model_params)
         print(f"all games done in {time.monotonic() - start:.0f}s", flush=True)
