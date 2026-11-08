@@ -90,6 +90,7 @@ def main() -> None:
     config = {k: v for k, v in vars(args).items() if k not in ("out",)}
     config["out"] = str(args.out)
     config["health_wait_seconds"] = round(waited, 1)
+    config["enable_thinking"] = False
     (args.out / f"config-{int(time.time())}.json").write_text(json.dumps(config, indent=2))
 
     client = OpenAIChatClient(
@@ -97,6 +98,7 @@ def main() -> None:
         api_key=api_key,
         model=args.model,
         temperature=args.temperature,
+        enable_thinking=False,
     )
     start = time.monotonic()
     asyncio.run(run_all(args, client, args.out))

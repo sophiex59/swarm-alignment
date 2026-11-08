@@ -13,13 +13,13 @@ class OpenAIChatClient:
         model: str = "llm",
         temperature: float = 0.7,
         max_tokens: int = 512,
-        disable_thinking: bool = True,
+        enable_thinking: bool = False,
     ):
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=5, timeout=600)
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.disable_thinking = disable_thinking
+        self.enable_thinking = enable_thinking
 
     async def check_authentication(self) -> None:
         """Make a small authenticated request before starting a run."""
@@ -28,7 +28,7 @@ class OpenAIChatClient:
     async def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], seed: int
     ) -> dict[str, Any]:
-        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+        extra_body = {"chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
         tool_kwargs: dict[str, Any] = {"tools": tools, "tool_choice": "auto"} if tools else {}
         resp = await self._client.chat.completions.create(
             model=self.model,
@@ -37,7 +37,7 @@ class OpenAIChatClient:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             seed=seed,
-            extra_body=extra_body if self.disable_thinking else None,
+            extra_body=extra_body,
         )
         msg = resp.choices[0].message
         return {

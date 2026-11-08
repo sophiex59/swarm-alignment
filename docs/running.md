@@ -34,7 +34,9 @@ uv run --env-file .env python -m swarm_alignment.runner \
   --live
 ```
 
-The runner waits for the server, checks the key against `/v1/models`, then starts games. `--lb` accepts `off`, `on`, or `team`; pass multiple values to compare conditions. Discovery supports 2–8 agents and 1–10 rounds. Each completed game writes a JSONL event log in the output directory. Live mode prints the same events as they happen.
+The runner waits for the server, checks the key against `/v1/models`, then starts games. `--lb` accepts `off`, `on`, or `team`; pass multiple values to compare conditions. Discovery supports 2–8 agents and 1–10 rounds. Each completed game writes a machine-readable `.jsonl` event log and a readable `.log` summary in the output directory. Live mode prints those summaries as events happen.
+
+Qwen3 thinking is disabled for model calls. This keeps reasoning out of public board messages; historical runs in [results.md](results.md) also used thinking off.
 
 Use a separate output directory when changing run settings. Existing game logs are skipped by filename, even if the settings differ; resume checks are not yet tied to a run manifest.
 
