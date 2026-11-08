@@ -60,7 +60,7 @@ RUNS: list[dict[str, Any]] = [
         "id": "live-smoke-6-async",
         "label": "Run 6",
         "date": "2026-11-08",
-        "commit": "PENDING",
+        "commit": "e775a92",
         "design": "Run 5 without end_round (finished agents can only wait); probe with history",
     },
 ]
