@@ -1,5 +1,9 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Swarm Discovery Results</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -141,6 +145,8 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header style="display:grid;gap:10px">
@@ -227,9 +233,10 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
     </div>
   </section>
 
-  <p class="note">Data: <span class="mono">uv run python -m swarm_alignment.export_results</span> on branch <span class="mono">will/live-board-engine</span> turns the game logs into this page's data file. Games still running are included as far as they have got.</p>
+  <p class="note">Built by <span class="mono">uv run python -m swarm_alignment.export_results</span>, which reads the game logs in <span class="mono">results/</span> and writes this page with its data embedded. Games still running are included as far as they have got; rebuild to refresh. <span id="built"></span></p>
 </div>
 
+<!--RESULTS-DATA-->
 <script>
 const RUN_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
 const TOOL_COLS = [
@@ -554,6 +561,7 @@ function renderStatus() {
 }
 
 function start() {
+  if (DATA.built) $("#built").textContent = `Last built ${DATA.built}.`;
   const latest = DATA.runs.slice(-3).map(r => r.id);
   latest.forEach(id => state.runs.add(id));
   const last = games().filter(({ g }) => g.status === "finished").pop() || games().pop();
@@ -561,7 +569,12 @@ function start() {
   renderStatus(); renderHypotheses(); renderRunsTable(); renderPills(); renderCurves(); renderGameSelect(); renderGame();
 }
 
-fetch("data.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+// The exporter embeds the data in a <script id="results-data"> tag, so the page works when opened
+// straight from disk. Served next to a data.json file, it falls back to fetching that instead.
+const embedded = document.getElementById("results-data");
+(embedded ? Promise.resolve(JSON.parse(embedded.textContent)) : fetch("data.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }))
   .then(d => { DATA = d; start(); })
-  .catch(err => { $("#status").replaceChildren(el("span", { class: "error" }, `Could not load data.json (${err.message}). Publish the page together with the exported data file.`)); });
+  .catch(err => { $("#status").replaceChildren(el("span", { class: "error" }, `No results data (${err.message}). Build the page with: uv run python -m swarm_alignment.export_results`)); });
 </script>
+</body>
+</html>

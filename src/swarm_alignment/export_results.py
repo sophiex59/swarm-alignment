@@ -1,15 +1,19 @@
-"""Export game logs to one compact JSON file for the results explorer page.
+"""Build the results explorer: a standalone HTML page with the run summaries embedded.
 
-uv run python -m swarm_alignment.export_results --out results/explorer/data.json
+uv run python -m swarm_alignment.export_results
 
 Reads every run listed in RUNS (finished .jsonl logs, plus .jsonl.part logs of games still
 running) and writes per-game summaries: per-round, per-agent outcomes, requests to the holder,
 tool use, timings and probe answers. Raw transcripts are not included.
+
+Writes results/explorer/index.html (open it straight from disk; no server needed) and the same
+data as results/explorer/data.json. The page template is explorer/results.html.
 """
 
 import argparse
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +59,18 @@ RUNS: list[dict[str, Any]] = [
 ]
 
 TOOLS = [*analysis.TOOL_ORDER, "wait"]
+TEMPLATE = Path(__file__).resolve().parents[2] / "explorer" / "results.html"
+PLACEHOLDER = "<!--RESULTS-DATA-->"
+
+
+def build_page(data: dict[str, Any], template: Path = TEMPLATE) -> str:
+    """The template with the data embedded, so the page works without a server."""
+    html = template.read_text()
+    if PLACEHOLDER not in html:
+        raise ValueError(f"{template} has no {PLACEHOLDER} placeholder")
+    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+    tag = f'<script id="results-data" type="application/json">{payload}</script>'
+    return html.replace(PLACEHOLDER, tag, 1)
 
 
 def game_record(events: list[dict[str, Any]], status: str) -> dict[str, Any]:
@@ -167,19 +183,21 @@ def export(root: Path) -> dict[str, Any]:
                     games.append(game_record(events, "running"))
         if games:
             runs.append({**run, "games": sorted(games, key=lambda g: (g["lb"], g["seed"]))})
-    return {"runs": runs}
+    return {"built": datetime.now().strftime("%Y-%m-%d %H:%M"), "runs": runs}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, default=Path("results"))
-    parser.add_argument("--out", type=Path, default=Path("results/explorer/data.json"))
+    parser.add_argument("--out", type=Path, default=Path("results/explorer"))
     args = parser.parse_args()
     data = export(args.results)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(data, separators=(",", ":")))
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "data.json").write_text(json.dumps(data, separators=(",", ":")))
+    page = args.out / "index.html"
+    page.write_text(build_page(data))
     games = sum(len(r["games"]) for r in data["runs"])
-    print(f"wrote {args.out}: {len(data['runs'])} runs, {games} games")
+    print(f"wrote {page} and data.json: {len(data['runs'])} runs, {games} games")
 
 
 if __name__ == "__main__":
