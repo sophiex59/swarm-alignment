@@ -56,6 +56,13 @@ RUNS: list[dict[str, Any]] = [
         "commit": "1483114",
         "design": "Asynchronous islands: each agent its own loop, 5 minutes per round",
     },
+    {
+        "id": "live-smoke-6-async",
+        "label": "Run 6",
+        "date": "2026-11-08",
+        "commit": "PENDING",
+        "design": "Run 5 without end_round (finished agents can only wait); probe with history",
+    },
 ]
 
 TOOLS = [*analysis.TOOL_ORDER, "wait"]

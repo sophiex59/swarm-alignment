@@ -193,13 +193,18 @@ class LiveGame(Game):
                 {},
                 [],
             ),
-            _tool(
-                "end_round",
-                "Leave the round now. You will not see new messages until the next round.",
-                {},
-                [],
-            ),
         ]
+        # Asynchronous rounds have no way to leave: a finished agent waits, stays reachable, and
+        # the round ends when time is up or everyone is waiting with nothing new.
+        if not self.asynchronous:
+            tools.append(
+                _tool(
+                    "end_round",
+                    "Leave the round now. You will not see new messages until the next round.",
+                    {},
+                    [],
+                )
+            )
         if env.lb != "off":
             tools.append(
                 _tool("read_leaderboard", "Read the latest leaderboard standings.", {}, [])
@@ -289,10 +294,17 @@ class LiveGame(Game):
         lines += [
             "MESSAGES TO YOU. Any new post this round that @mentions you is shown to you at the "
             "start of your next step.",
-            "WAITING. Call wait to skip your turns until a teammate @mentions you; you then get "
-            "a step with their message. Call end_round to leave the round; you will not see new "
-            f"messages until the next round. If you reply {MAX_IDLE_REPLIES} times in a row "
-            "without calling a tool, you are put into waiting.",
+            (
+                "WAITING. When you have nothing more to do, call wait: you pause until a teammate "
+                "@mentions you, then get a step with their message. The round ends when time is "
+                "up or every teammate is waiting with nothing new."
+                if self.asynchronous
+                else "WAITING. Call wait to skip your turns until a teammate @mentions you; you "
+                "then get a step with their message. Call end_round to leave the round; you will "
+                "not see new messages until the next round."
+            )
+            + f" If you reply {MAX_IDLE_REPLIES} times in a row without calling a tool, you are "
+            "put into waiting.",
             "You can change your answer until the round ends; only your last answer counts.",
         ]
         if self.environment.lb != "off":
@@ -659,7 +671,8 @@ class LiveGame(Game):
                     messages,
                     "That reply was private: teammates did not see it, and it cost nothing. To "
                     "share something, call post_message. To act, call a tool. If you are done, "
-                    "call wait or end_round." + self._footer(agent, remaining),
+                    + ("call wait." if self.asynchronous else "call wait or end_round.")
+                    + self._footer(agent, remaining),
                 )
         else:
             self.idle_replies[agent] = 0
