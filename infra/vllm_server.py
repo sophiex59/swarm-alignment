@@ -28,6 +28,7 @@ image = (
     .env(
         {
             "HF_XET_HIGH_PERFORMANCE": "1",
+            "SWARM_APP": os.environ.get("SWARM_APP", "swarm-vllm"),
             "SWARM_MODEL": MODEL_NAME,
             "SWARM_MODEL_REVISION": MODEL_REVISION,
         }
