@@ -18,3 +18,5 @@ These are the same checks CI runs on every PR. Run Python through uv (`uv run py
 ## Running the birthday pilot
 
 See [docs/running.md](docs/running.md): deploy the model server on Modal, play the games, score the logs. [docs/results.md](docs/results.md) has the results so far, and [docs/costs.md](docs/costs.md) tracks what each run has cost and what the next ones should cost. [docs/environments-plan.md](docs/environments-plan.md) is the build plan for the three environments in Will's spec: discovery, inference and safety. [docs/setup.md](docs/setup.md) has diagrams of how the pieces fit together and how a round runs.
+
+The Discovery runner defaults to 10 rounds and will not run more than 10 rounds per game.

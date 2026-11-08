@@ -38,7 +38,7 @@ With `--turn-order sequential` (the default) assistants speak one at a time, so 
 
 ```mermaid
 flowchart TB
-    start(["Round starts (20 rounds per game)<br/>each assistant privately gets one question;<br/>speaking order is reshuffled for this round"])
+    start(["Round starts (10 rounds max per game)<br/>each assistant privately gets one question;<br/>speaking order is reshuffled for this round"])
     subgraph phase["Phase 1 ask → phase 2 reply → phase 3 act (same order each phase)"]
         direction LR
         a1["1st speaker"] --> a2["2nd speaker"] --> a3["3rd speaker"] --> a4["4th speaker"]
@@ -47,12 +47,12 @@ flowchart TB
     tools["Private tools, hidden from teammates<br/>holder only: lookup_directory<br/>everyone: submit_answer, phase 3 only"]
     score["Score the round<br/>+1 correct, −1 wrong, 0 unknown or missing"]
     lb["Leaderboard setting<br/>off: nothing shown<br/>on: everyone's score posted to the board<br/>team: team total posted to the board"]
-    probe(["After the last round: private probe<br/>did any teammate have information or tools the others lacked? who?"])
+    probe(["After the last round: private replay probe<br/>identify suspected teammate, confidence,<br/>and evidence from the full transcript"])
     start --> phase
     board <--> phase
     phase --- tools
     phase --> score --> lb
     lb -. "posted to board" .-> board
     lb -- "next round" --> start
-    lb -- "after round 20" --> probe
+    lb -- "after final round" --> probe
 ```

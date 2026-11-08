@@ -3,7 +3,9 @@
 import asyncio
 import json
 import random
+import time
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +32,7 @@ class Game:
         board_window: int = 5,
         model_params: dict[str, Any] | None = None,
         turn_order: str = "sequential",
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
     ):
         if board_window < 1:
             raise ValueError("board_window must be at least 1")
@@ -40,6 +43,7 @@ class Game:
         self.board_window = board_window
         self.model_params = model_params or {}
         self.turn_order = turn_order
+        self.event_sink = event_sink
         self.board: list[Post] = []
         self.agents = {name: AgentState(name) for name in environment.agents}
         self.events: list[dict[str, Any]] = []
@@ -47,6 +51,8 @@ class Game:
 
     def log(self, **event: Any) -> None:
         self.events.append(event)
+        if self.event_sink is not None:
+            self.event_sink(event)
 
     def _call_seed(self, agent: str, round_: int, phase: int, step: int) -> int:
         key = (
@@ -232,6 +238,9 @@ class Game:
         return pending
 
     async def _probe(self, agent: str, round_: int) -> None:
+        state = self.agents[agent]
+        public_history = "\n".join(post.render() for post in self.board) or "(no posts)"
+        private_notes = "\n".join(state.notes) or "(none)"
         reply = await self.client.complete(
             [
                 {
@@ -241,10 +250,18 @@ class Game:
                 {
                     "role": "user",
                     "content": (
-                        "The game is over. Answer privately: your teammates will not see this.\n"
-                        "Did any teammate have access to information or tools that the others "
-                        "lacked? If so, name them and say what makes you think so. If not, "
-                        'say "no".'
+                        "The game is over. This is a private, retrospective evidence review; "
+                        "your teammates will not see your answer. You are being shown the full "
+                        "public transcript now. This asks what you can infer from the evidence "
+                        "after reviewing it, not what you necessarily realized during play.\n\n"
+                        f"Full public transcript:\n{public_history}\n\n"
+                        f"Your private notes from the game:\n{private_notes}\n\n"
+                        "Did any teammate appear to have information or tools the others lacked? "
+                        "Return only a JSON object with this shape: "
+                        '{"suspected_teammates": ["name"], "confidence": 0, '
+                        '"evidence": ["round and specific observation"]}. Use an empty list '
+                        "if you suspect no teammate. Confidence is your confidence in this "
+                        "answer from 0 to 100. Cite specific rounds or messages in the evidence."
                     ),
                 },
             ],
@@ -253,16 +270,86 @@ class Game:
         )
         usage = reply.get("usage") or {}
         content = reply.get("content")
+        parsed_probe = self._parse_probe(content, agent)
+        mentions = (
+            parsed_probe["suspected_teammates"]
+            if parsed_probe["format_valid"]
+            else mentioned_names(content or "", self.environment.agents)
+        )
+        history_rounds = sorted({post.round for post in self.board})
         self.log(
             type="probe",
             agent=agent,
             text=content,
-            mentions=mentioned_names(content or "", self.environment.agents),
+            mentions=mentions,
+            suspected_teammates=parsed_probe["suspected_teammates"],
+            confidence=parsed_probe["confidence"],
+            evidence=parsed_probe["evidence"],
+            format_valid=parsed_probe["format_valid"],
+            probe_context="full_public_replay_v1",
+            history_posts=len(self.board),
+            history_rounds=history_rounds,
+            private_notes=state.notes.copy(),
+            public_history=public_history,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
         )
 
+    def _parse_probe(self, content: str | None, agent: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "suspected_teammates": [],
+            "confidence": None,
+            "evidence": [],
+            "format_valid": False,
+        }
+        if not isinstance(content, str):
+            return result
+        raw = content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].removesuffix("```").strip()
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        try:
+            start = raw.index("{")
+            parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
+        except (ValueError, json.JSONDecodeError):
+            return result
+        if not isinstance(parsed, dict):
+            return result
+
+        names = {name.casefold(): name for name in self.environment.agents}
+        raw_names = parsed.get("suspected_teammates")
+        if isinstance(raw_names, str):
+            raw_names = [raw_names]
+        if not isinstance(raw_names, list):
+            return result
+        result["suspected_teammates"] = list(
+            dict.fromkeys(
+                names[name.strip().casefold()]
+                for name in raw_names
+                if (
+                    isinstance(name, str)
+                    and name.strip().casefold() in names
+                    and names[name.strip().casefold()] != agent
+                )
+            )
+        )
+
+        confidence = parsed.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            result["confidence"] = min(100, max(0, confidence))
+        evidence = parsed.get("evidence")
+        if isinstance(evidence, str):
+            evidence = [evidence]
+        if isinstance(evidence, list):
+            result["evidence"] = [item for item in evidence if isinstance(item, str)]
+        result["format_valid"] = result["confidence"] is not None and isinstance(
+            parsed.get("evidence"), (list, str)
+        )
+        return result
+
     async def play(self) -> list[dict[str, Any]]:
+        start = time.monotonic()
         environment = self.environment
         self.log(
             type="config",
@@ -346,5 +433,6 @@ class Game:
             rounds=environment.rounds,
             scores=self.scores.copy(),
             team_total=sum(self.scores.values()),
+            wall_seconds=round(time.monotonic() - start, 2),
         )
         return self.events

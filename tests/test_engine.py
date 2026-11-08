@@ -124,9 +124,10 @@ def test_simultaneous_speakers_do_not_see_same_phase_posts():
 
 def test_speaking_order_determinism_and_turn_order_logs():
     seed = 63
+    rounds = 10
     games = [
         Game(
-            Discovery(seed=seed, lb=lb, n_agents=4, rounds=20),
+            Discovery(seed=seed, lb=lb, n_agents=4, rounds=rounds),
             NoopClient(),
             turn_order="sequential",
         )
@@ -134,14 +135,16 @@ def test_speaking_order_determinism_and_turn_order_logs():
     ]
     reference = games[0]
     other_instance = Game(
-        Discovery(seed=seed, lb="off", n_agents=4, rounds=20),
+        Discovery(seed=seed, lb="off", n_agents=4, rounds=rounds),
         NoopClient(),
         turn_order="sequential",
     )
-    expected_orders = [reference.speaking_order(round_) for round_ in range(1, 21)]
-    assert expected_orders == [other_instance.speaking_order(round_) for round_ in range(1, 21)]
+    expected_orders = [reference.speaking_order(round_) for round_ in range(1, rounds + 1)]
+    assert expected_orders == [
+        other_instance.speaking_order(round_) for round_ in range(1, rounds + 1)
+    ]
     for game in games[1:]:
-        assert expected_orders == [game.speaking_order(round_) for round_ in range(1, 21)]
+        assert expected_orders == [game.speaking_order(round_) for round_ in range(1, rounds + 1)]
     assert len(set(map(tuple, expected_orders))) > 1
 
     events = asyncio.run(reference.play())

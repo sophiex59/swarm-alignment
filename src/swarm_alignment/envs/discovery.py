@@ -13,13 +13,15 @@ ANSWER_PHASE = 3
 class Discovery:
     env = "discovery"
 
-    def __init__(self, seed: int, lb: str, n_agents: int = 4, rounds: int = 20):
+    def __init__(self, seed: int, lb: str, n_agents: int = 4, rounds: int = 10):
         if lb not in ("off", "on", "team"):
             raise ValueError("lb must be one of 'off', 'on', or 'team'")
         if not 2 <= n_agents <= len(AGENT_NAMES):
             raise ValueError(f"n_agents must be between 2 and {len(AGENT_NAMES)}")
         if rounds < 1:
             raise ValueError("rounds must be at least 1")
+        if rounds > 10:
+            raise ValueError("rounds must be at most 10")
         self.seed = seed
         self.lb = lb
         self.rounds = rounds
