@@ -112,6 +112,9 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
 .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 0.8rem; box-shadow: 0 4px 14px rgba(0,0,0,0.12); min-width: 170px; z-index: 5; }
 .tip b { font-weight: 600; }
 .tip .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.series-hit { cursor: pointer; }
+.series-label { cursor: pointer; }
+.series-label:hover, .series-label:focus-visible { text-decoration: underline; outline: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -175,7 +178,7 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
   <section aria-labelledby="h-curves">
     <div class="sec-head">
       <h2 id="h-curves">Solving curves</h2>
-      <p class="note">Share of directory questions that non-holders answered correctly, by round. Without help this stays at 0. The shape we hope for is a line that leaves 0 and stays up once agents start routing to the holder.</p>
+      <p class="note">Share of directory questions that non-holders answered correctly, by round, pooled over the three non-holders. Without help this stays at 0. The shape we hope for is a line that leaves 0 and stays up once agents start routing to the holder. Click any line to see each agent in that game.</p>
     </div>
     <div class="panel">
       <div class="controls">
@@ -192,6 +195,20 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
       </div>
       <div class="chart" id="curve"></div>
       <div class="legend" id="curve-legend"></div>
+    </div>
+    <div class="panel" id="drill">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px">
+        <h3 id="drill-title">Each agent, round by round</h3>
+        <span class="note">Click a line or its label above to open that game here.</span>
+      </div>
+      <div class="chart" id="agent-curve"></div>
+      <div class="legend">
+        <span><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="var(--ink)"/></svg>solved a directory question (needed the holder)</span>
+        <span><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.6"/></svg>answered its own record</span>
+        <span><svg width="14" height="14" aria-hidden="true"><path d="M3,3 L11,11 M11,3 L3,11" stroke="var(--crit)" stroke-width="2"/></svg>wrong answer</span>
+        <span>No marker: answered "unknown" or nothing, so the line stays flat.</span>
+        <span><svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--faint)" stroke-dasharray="4 3"/></svg>every answer correct</span>
+      </div>
     </div>
   </section>
 
@@ -428,21 +445,31 @@ function renderCurves() {
     const pts = s.pts.filter(p => p.v != null);
     if (!pts.length) continue;
     const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.r)},${y(p.v)}`).join(" ");
-    svg.append(svgEl("path", { d, fill: "none", stroke: color(s.run), "stroke-width": 2, "stroke-dasharray": s.g.lb === "on" ? "6 4" : "", "stroke-linejoin": "round" }));
+    const selected = gameKey(s.run, s.g) === state.game;
+    svg.append(svgEl("path", { d, fill: "none", stroke: color(s.run), "stroke-width": selected ? 3.5 : 2, "stroke-dasharray": s.g.lb === "on" ? "6 4" : "", "stroke-linejoin": "round" }));
     for (const p of pts) svg.append(svgEl("circle", { cx: x(p.r), cy: y(p.v), r: 3.2, fill: color(s.run), stroke: "var(--surface)", "stroke-width": 1.5 }));
     const last = pts[pts.length - 1];
-    labels.push({ y: y(last.v), x: x(last.r), text: `${s.run.label} · LB ${s.g.lb}${s.g.status === "running" ? " (running)" : ""}`, c: color(s.run) });
+    labels.push({ y: y(last.v), x: x(last.r), text: `${s.run.label} · LB ${s.g.lb}${s.g.status === "running" ? " (running)" : ""}`, c: color(s.run), key: gameKey(s.run, s.g), d });
   }
   labels.sort((a, b) => a.y - b.y);
   for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
   for (const l of labels) {
     svg.append(svgEl("circle", { cx: W - M.r + 10, cy: l.y - 4, r: 3.5, fill: l.c }));
-    svg.append(svgEl("text", { x: W - M.r + 18, y: l.y, fill: "var(--ink)", "font-size": 11 }, l.text));
+    const t = svgEl("text", { x: W - M.r + 18, y: l.y, fill: "var(--ink)", "font-size": 11, "font-weight": l.key === state.game ? 600 : 400, class: "series-label", tabindex: 0, role: "button" }, l.text);
+    t.addEventListener("click", () => selectGame(l.key));
+    t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectGame(l.key); } });
+    svg.append(t);
   }
   const cross = svgEl("line", { y1: M.t, y2: H - M.b, stroke: "var(--faint)", "stroke-width": 1, visibility: "hidden" });
   svg.append(cross);
   const hit = svgEl("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" });
   svg.append(hit);
+  for (const l of labels) {
+    const h = svgEl("path", { d: l.d, fill: "none", stroke: "transparent", "stroke-width": 14, class: "series-hit" });
+    h.append(svgEl("title", {}, `${l.text}: click to see each agent`));
+    h.addEventListener("click", () => selectGame(l.key));
+    svg.append(h);
+  }
   root.append(svg);
   if (!series.length) { root.append(el("p", { class: "note" }, "Pick at least one run.")); }
   const tip = el("div", { class: "tip", hidden: "" }); root.append(tip);
@@ -463,6 +490,88 @@ function renderCurves() {
   lg.append(el("span", {}, "Solid line: leaderboard off"), el("span", {}, "Dashed line: leaderboard on"), el("span", {}, state.mode === "cum" ? "Cumulative share since round 1" : "Share within each round; gaps are rounds with no directory question"));
 }
 
+// ---------- selection ----------
+function selectGame(key) {
+  state.game = key;
+  $("#game-select").value = key;
+  renderCurves();
+  renderGame();
+  $("#drill").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+}
+
+const AGENT_COLORS = ["var(--ink)", "var(--s1)", "var(--s2)", "var(--s3)", "var(--s5)", "var(--s4)"];
+
+function renderAgentCurves(run, g) {
+  const root = $("#agent-curve"); root.replaceChildren();
+  $("#drill-title").textContent = `Each agent, round by round: ${run.label} · leaderboard ${g.lb}${g.status === "running" ? " (running)" : ""}`;
+  const agents = [g.holder, ...g.agents.filter(a => a !== g.holder)];
+  const n = g.rounds_planned;
+  const W = 960, H = 300, M = { l: 40, r: 120, t: 12, b: 36 };
+  const x = r => M.l + (r - 0) / n * (W - M.l - M.r);
+  const y = v => H - M.b - v / n * (H - M.t - M.b);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Cumulative correct answers per agent, ${run.label}, leaderboard ${g.lb}` });
+  for (let v = 0; v <= n; v += 2) {
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--grid)" }));
+    svg.append(svgEl("text", { x: M.l - 8, y: y(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, v));
+  }
+  for (let r = 1; r <= n; r++) svg.append(svgEl("text", { x: x(r), y: H - M.b + 18, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, r));
+  svg.append(svgEl("text", { x: (M.l + W - M.r) / 2, y: H - 3, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 }, "round"));
+  svg.append(svgEl("text", { x: 4, y: M.t + 4, fill: "var(--muted)", "font-size": 11 }, "correct"));
+  svg.append(svgEl("line", { x1: x(0), y1: y(0), x2: x(n), y2: y(n), stroke: "var(--faint)", "stroke-dasharray": "4 3" }));
+  const labels = [];
+  agents.forEach((a, i) => {
+    const c = AGENT_COLORS[i % AGENT_COLORS.length];
+    let total = 0;
+    const pts = [{ r: 0, v: 0 }];
+    for (let r = 1; r <= n; r++) {
+      const cell = g.grid[a].find(z => z && z.r === r);
+      if (!cell) break;
+      if (cell.res === "correct") total += 1;
+      pts.push({ r, v: total, cell });
+    }
+    const d = pts.map((p, k) => `${k ? "L" : "M"}${x(p.r)},${y(p.v)}`).join(" ");
+    svg.append(svgEl("path", { d, fill: "none", stroke: c, "stroke-width": a === g.holder ? 3 : 2, "stroke-linejoin": "round" }));
+    for (const p of pts.slice(1)) {
+      if (p.cell.res === "correct" && !p.cell.own) svg.append(svgEl("circle", { cx: x(p.r), cy: y(p.v), r: 5, fill: c, stroke: "var(--surface)", "stroke-width": 1.5 }));
+      else if (p.cell.res === "correct") svg.append(svgEl("circle", { cx: x(p.r), cy: y(p.v), r: 4.2, fill: "var(--surface)", stroke: c, "stroke-width": 1.8 }));
+      else if (p.cell.res === "wrong") svg.append(svgEl("path", { d: `M${x(p.r) - 4},${y(p.v) - 4} L${x(p.r) + 4},${y(p.v) + 4} M${x(p.r) + 4},${y(p.v) - 4} L${x(p.r) - 4},${y(p.v) + 4}`, stroke: "var(--crit)", "stroke-width": 2 }));
+    }
+    const last = pts[pts.length - 1];
+    labels.push({ y: y(last.v), x: x(last.r), c, text: `${a}${a === g.holder ? " ★" : ""} · ${total}` });
+  });
+  labels.sort((p, q) => p.y - q.y);
+  for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
+  for (const l of labels) {
+    svg.append(svgEl("circle", { cx: W - M.r + 12, cy: l.y - 4, r: 3.5, fill: l.c }));
+    svg.append(svgEl("text", { x: W - M.r + 20, y: l.y, fill: "var(--ink)", "font-size": 11 }, l.text));
+  }
+  const cross = svgEl("line", { y1: M.t, y2: H - M.b, stroke: "var(--faint)", visibility: "hidden" });
+  svg.append(cross);
+  const hit = svgEl("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" });
+  svg.append(hit);
+  root.append(svg);
+  const tip = el("div", { class: "tip", hidden: "" }); root.append(tip);
+  const word = { correct: "correct", unknown: "unknown", wrong: "wrong", missing: "no answer" };
+  hit.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const r = Math.max(1, Math.min(n, Math.round((px - M.l) / (W - M.l - M.r) * n)));
+    cross.setAttribute("x1", x(r)); cross.setAttribute("x2", x(r)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("b", {}, `Round ${r}`));
+    const reqs = g.requests.filter(q => q.round === r);
+    for (const a of agents) {
+      const cell = g.grid[a].find(z => z && z.r === r);
+      const row = el("div", { class: "row" });
+      row.append(el("span", {}, a + (a === g.holder ? " ★" : "")), el("span", {}, cell ? `${word[cell.res] || cell.res} · ${cell.own ? "own record" : "directory"}` : "not played"));
+      tip.append(row);
+    }
+    if (reqs.length) tip.append(el("div", { class: "row" }, `${reqs.length} request(s) to the holder, ${reqs.filter(q => q.answered).length} replied`));
+    tip.hidden = false;
+    tip.style.left = Math.min(box.width - 230, (x(r) / W) * box.width + 12) + "px"; tip.style.top = "10px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+}
+
 // ---------- one game ----------
 function renderGameSelect() {
   const sel = $("#game-select");
@@ -471,13 +580,14 @@ function renderGameSelect() {
     sel.append(o);
   }
   sel.value = state.game;
-  sel.addEventListener("change", () => { state.game = sel.value; renderGame(); });
+  sel.addEventListener("change", () => { state.game = sel.value; renderCurves(); renderGame(); });
 }
 
 function renderGame() {
   const found = games().find(({ run, g }) => gameKey(run, g) === state.game);
   if (!found) return;
   const { run, g } = found;
+  renderAgentCurves(run, g);
   const s = g.settings;
   $("#game-meta").textContent = `${g.rounds_done}/${g.rounds_planned} rounds · ${s.turn_order}${s.laps ? `, ${s.laps} laps` : ""}${s.round_seconds ? `, ${s.round_seconds / 60} min` : ""}${s.budget ? `, budget ${s.budget}` : ""} · thinking ${s.thinking ? "on" : "off"}`;
   // answers grid
