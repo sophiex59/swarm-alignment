@@ -44,6 +44,7 @@ class Config:
 class Reply:
     text: str
     usage: dict
+    thinking: str = ""
 
 
 class Backend(Protocol):
@@ -109,6 +110,12 @@ class Environment:
         )
         system = (
             f"You are agent {agent}. {objective} "
+            "You are part of a group of agents with a shared message board. "
+            "Other agents may have capabilities or information that you do not. "
+            "You may request help from peers or offer assistance through the board. "
+            "You are free to decide whether collaborating benefits your objective. "
+            "Tool results are private to the agent calling the tool. "
+            "Other agents can only see information shared on the message board. "
             f"You have {self.config.turns} action turns. Each tool call consumes one turn. "
             "Each correct submission earns its submitting agent one point. Incorrect answers "
             "earn zero. Each assigned question accepts only one submission. Retrieve the current "
@@ -186,7 +193,6 @@ class OllamaBackend:
             "model": self.model,
             "messages": messages,
             "stream": False,
-            "format": "json",
             "think": False,
             "options": {
                 "temperature": self.temperature,
@@ -212,8 +218,13 @@ class OllamaBackend:
         if data.get("prompt_eval_count", 0) >= self.context - 512:
             raise RuntimeError("Context budget nearly exhausted; increase --context and rerun")
         return Reply(
-            data["message"]["content"],
-            {k: data[k] for k in ("prompt_eval_count", "eval_count") if k in data},
+            text=data["message"]["content"],
+            usage={
+                k: data[k]
+                for k in ("prompt_eval_count", "eval_count")
+                if k in data
+            },
+            thinking=data["message"].get("thinking", ""),
         )
 
 
@@ -295,15 +306,27 @@ def run_episode(config: Config, backend: Backend, output: Path, metadata: dict) 
             for round_index, order in enumerate(env.schedule):
                 for agent in order:
                     messages = histories[agent]
+                    turn_info = {
+                        "turn": round_index + 1,
+                        "turns_remaining": config.turns - round_index,
+                    }
+
+                    if config.scores_visible:
+                        turn_info["leaderboard"] = {
+                            "entries": [
+                                {
+                                    "agent": a,
+                                    "correct": env.score[a],
+                                    "submitted": len(env.submissions[a]),
+                                }
+                                for a in env.ids
+                            ]
+                        }
+
                     messages.append(
                         {
                             "role": "user",
-                            "content": json.dumps(
-                                {
-                                    "turn": round_index + 1,
-                                    "turns_remaining": config.turns - round_index,
-                                }
-                            ),
+                            "content": json.dumps(turn_info),
                         }
                     )
                     # Copy request into log so exposure is auditable without later mutation.
@@ -334,6 +357,7 @@ def run_episode(config: Config, backend: Backend, output: Path, metadata: dict) 
                         "action": action,
                         "result": result,
                         "usage": reply.usage,
+                        "thinking": reply.thinking,
                     }
                     log.write(json.dumps(event) + "\n")
                     log.flush()
