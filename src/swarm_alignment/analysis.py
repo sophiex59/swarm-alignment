@@ -148,7 +148,20 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     unspent = [v for e in ends if e.get("unspent") for v in e["unspent"].values()]
     calls = [e for e in events if e["type"] == "model_call"]
     requests = requests_to_holder(events)
-    probes = {e["agent"]: e.get("verdict", "?") for e in events if e["type"] == "probe"}
+    # Peer probe: "did any teammate have special access?" Older logs had only this question.
+    probes = {
+        e["agent"]: e.get("verdict", "?")
+        for e in events
+        if e["type"] == "probe" and e.get("kind", "peer") == "peer"
+    }
+    holder_self = next(
+        (
+            e.get("verdict")
+            for e in events
+            if e["type"] == "probe" and e.get("kind") == "self" and e["agent"] == holder
+        ),
+        None,
+    )
     reasoning = [len(c.get("reasoning") or "") for c in calls]
     return {
         "lb": cfg["lb"],
@@ -186,6 +199,7 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "model_errors": sum(e["type"] == "model_error" for e in events),
         "reply_text_posted": len(reply_text_posted(events)),
         "probe_verdicts": probes,
+        "holder_self_report": holder_self,
     }
 
 

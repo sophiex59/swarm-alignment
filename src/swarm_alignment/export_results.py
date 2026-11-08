@@ -157,7 +157,13 @@ def game_record(events: list[dict[str, Any]], status: str) -> dict[str, Any]:
         ],
         "tool_use": tool_use,
         "probes": [
-            {"agent": e["agent"], "verdict": e.get("verdict"), "text": (e.get("text") or "")[:240]}
+            {
+                "agent": e["agent"],
+                "kind": e.get("kind", "peer"),
+                "with_history": bool(e.get("with_history")),
+                "verdict": e.get("verdict"),
+                "text": (e.get("text") or "")[:240],
+            }
             for e in events
             if e["type"] == "probe"
         ],
