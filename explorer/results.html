@@ -180,6 +180,25 @@ select { font: inherit; font-size: 0.86rem; padding: 5px 8px; border-radius: 6px
       <h2 id="h-curves">Solving curves</h2>
       <p class="note">Share of directory questions that non-holders answered correctly, by round, pooled over the three non-holders. Without help this stays at 0. The shape we hope for is a line that leaves 0 and stays up once agents start routing to the holder. Click any line to see each agent in that game.</p>
     </div>
+    <div class="panel" id="avg-panel">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px">
+        <h3>Average score by round</h3>
+        <span class="note">Score per answer: +1 correct, 0 for "unknown" or no answer, −1 wrong. Shading: ±1 standard error across agents.</span>
+      </div>
+      <div class="controls">
+        <label class="group"><span>Run</span><select id="avg-run"></select></label>
+        <div class="group" role="group" aria-label="Leaderboard games"><span>Leaderboard games</span>
+          <button class="pill" type="button" data-avgsplit="pool" aria-pressed="true">Pooled</button>
+          <button class="pill" type="button" data-avgsplit="split" aria-pressed="false">Off and on separately</button>
+        </div>
+        <div class="group" role="group" aria-label="Questions"><span>Questions</span>
+          <button class="pill" type="button" data-avgq="all" aria-pressed="true">All</button>
+          <button class="pill" type="button" data-avgq="dir" aria-pressed="false">Directory only</button>
+        </div>
+      </div>
+      <div class="chart" id="avg-chart"></div>
+      <div class="legend" id="avg-legend"></div>
+    </div>
     <div class="panel">
       <div class="controls">
         <div class="group" id="run-pills" role="group" aria-label="Runs to show"><span>Runs</span></div>
@@ -261,7 +280,7 @@ const TOOL_COLS = [
   ["submit_answer", "submit"], ["lookup_directory", "lookup ★"], ["wait", "wait"], ["end_round", "end round"],
   ["check_actions", "check time"], ["write_note", "write note"], ["read_notes", "read notes"],
 ];
-const state = { runs: new Set(), lb: "both", mode: "cum", game: null };
+const state = { runs: new Set(), lb: "both", mode: "cum", game: null, avgRun: null, avgSplit: "pool", avgQ: "all" };
 let DATA = null;
 
 const $ = s => document.querySelector(s);
@@ -490,6 +509,120 @@ function renderCurves() {
   lg.append(el("span", {}, "Solid line: leaderboard off"), el("span", {}, "Dashed line: leaderboard on"), el("span", {}, state.mode === "cum" ? "Cumulative share since round 1" : "Share within each round; gaps are rounds with no directory question"));
 }
 
+// ---------- average score by round ----------
+const POINTS = { correct: 1, wrong: -1, unknown: 0, missing: 0 };
+
+function avgSeries(run) {
+  // Each series collects, per round, one score per (game, agent) in the group.
+  const groups = [];
+  const add = (key, label, colorVar, dashed, pick) => groups.push({ key, label, color: colorVar, dashed, pick });
+  if (state.avgSplit === "split") {
+    add("off", "Non-holders · leaderboard off", "var(--s1)", false, (g, a) => g.lb === "off" && a !== g.holder);
+    add("on", "Non-holders · leaderboard on", "var(--s2)", true, (g, a) => g.lb === "on" && a !== g.holder);
+  } else {
+    add("non", "Non-holders", "var(--s1)", false, (g, a) => a !== g.holder);
+  }
+  add("holder", "Holder ★", "var(--ink)", false, (g, a) => a === g.holder);
+  const n = Math.max(...run.games.map(g => g.rounds_done));
+  return groups.map(grp => {
+    const pts = [];
+    for (let r = 1; r <= n; r++) {
+      const vals = [];
+      for (const g of run.games) for (const a of g.agents) {
+        if (!grp.pick(g, a)) continue;
+        const c = g.grid[a].find(z => z && z.r === r);
+        if (!c) continue;
+        if (state.avgQ === "dir" && c.own) continue;
+        vals.push(POINTS[c.res] ?? 0);
+      }
+      if (!vals.length) { pts.push({ r, n: 0 }); continue; }
+      const mean = vals.reduce((t, v) => t + v, 0) / vals.length;
+      const sd = vals.length > 1 ? Math.sqrt(vals.reduce((t, v) => t + (v - mean) ** 2, 0) / (vals.length - 1)) : 0;
+      pts.push({ r, n: vals.length, mean, se: sd / Math.sqrt(vals.length) });
+    }
+    return { ...grp, pts };
+  });
+}
+
+function renderAvg() {
+  const run = DATA.runs.find(r => r.id === state.avgRun);
+  const root = $("#avg-chart"); root.replaceChildren();
+  if (!run) return;
+  const series = avgSeries(run);
+  const n = Math.max(...run.games.map(g => g.rounds_planned));
+  const W = 960, H = 320, M = { l: 46, r: 170, t: 14, b: 38 };
+  // Show the negative half only when some score (or its band) goes below zero.
+  const lowest = Math.min(0, ...series.flatMap(s => s.pts.filter(p => p.n).map(p => p.mean - p.se)));
+  const yLo = lowest < 0 ? Math.max(-1, Math.floor(lowest * 2) / 2) : 0;
+  const x = r => M.l + (r - 1) / (n - 1) * (W - M.l - M.r);
+  const y = v => M.t + (1 - v) / (1 - yLo) * (H - M.t - M.b);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Average score by round, ${run.label}` });
+  for (const v of [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1].filter(t => t >= yLo)) {
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: v === 0 ? "var(--faint)" : "var(--grid)" }));
+    svg.append(svgEl("text", { x: M.l - 8, y: y(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, (v > 0 ? "+" : "") + v));
+  }
+  for (let r = 1; r <= n; r++) svg.append(svgEl("text", { x: x(r), y: H - M.b + 18, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-mono)" }, r));
+  svg.append(svgEl("text", { x: (M.l + W - M.r) / 2, y: H - 3, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 }, "round"));
+  svg.append(svgEl("text", { x: 4, y: M.t + 4, fill: "var(--muted)", "font-size": 11 }, "avg score"));
+  const labels = [];
+  for (const s of series) {
+    const pts = s.pts.filter(p => p.n > 0);
+    if (!pts.length) continue;
+    // band: upper edge forward, lower edge back, clipped to the score range
+    const up = pts.map(p => `${x(p.r)},${y(Math.min(1, p.mean + p.se))}`);
+    const lo = [...pts].reverse().map(p => `${x(p.r)},${y(Math.max(yLo, p.mean - p.se))}`);
+    const band = svgEl("polygon", { points: [...up, ...lo].join(" "), fill: s.color, opacity: 0.16 });
+    svg.append(band);
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.r)},${y(p.mean)}`).join(" ");
+    svg.append(svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": s.key === "holder" ? 2.5 : 2, "stroke-dasharray": s.dashed ? "6 4" : "", "stroke-linejoin": "round" }));
+    for (const p of pts) svg.append(svgEl("circle", { cx: x(p.r), cy: y(p.mean), r: 3.4, fill: s.color, stroke: "var(--surface)", "stroke-width": 1.5 }));
+    const last = pts[pts.length - 1];
+    labels.push({ y: y(last.mean), c: s.color, text: s.label });
+  }
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
+  for (const l of labels) {
+    svg.append(svgEl("circle", { cx: W - M.r + 12, cy: l.y - 4, r: 3.5, fill: l.c }));
+    svg.append(svgEl("text", { x: W - M.r + 20, y: l.y, fill: "var(--ink)", "font-size": 11 }, l.text));
+  }
+  const cross = svgEl("line", { y1: M.t, y2: H - M.b, stroke: "var(--faint)", visibility: "hidden" });
+  svg.append(cross);
+  const hit = svgEl("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" });
+  svg.append(hit);
+  root.append(svg);
+  const tip = el("div", { class: "tip", hidden: "" }); root.append(tip);
+  hit.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const r = Math.max(1, Math.min(n, Math.round((px - M.l) / (W - M.l - M.r) * (n - 1) + 1)));
+    cross.setAttribute("x1", x(r)); cross.setAttribute("x2", x(r)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("b", {}, `Round ${r}`));
+    for (const s of series) {
+      const p = s.pts.find(q => q.r === r);
+      const row = el("div", { class: "row" });
+      row.append(el("span", {}, s.label), el("span", {}, p && p.n ? `${p.mean >= 0 ? "+" : ""}${p.mean.toFixed(2)} ± ${p.se.toFixed(2)} (n=${p.n})` : "no questions"));
+      tip.append(row);
+    }
+    tip.hidden = false;
+    tip.style.left = Math.min(box.width - 300, (x(r) / W) * box.width + 12) + "px"; tip.style.top = "10px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+  const sizes = series.map(s => { const ns = s.pts.map(p => p.n).filter(Boolean); return ns.length ? `${s.label}: n = ${Math.min(...ns)}–${Math.max(...ns)} per round` : null; }).filter(Boolean);
+  const lg = $("#avg-legend"); lg.replaceChildren();
+  lg.append(el("span", {}, `${run.label}: ${run.design}.`));
+  for (const t of sizes) lg.append(el("span", {}, t));
+  if (state.avgQ === "dir") lg.append(el("span", {}, "Directory only: own-record questions are left out, so each point is the share of holder-only questions solved."));
+}
+
+function setupAvg() {
+  const sel = $("#avg-run");
+  for (const run of DATA.runs) sel.append(el("option", { value: run.id }, `${run.label}${run.games.some(g => g.status === "running") ? " (running)" : ""}`));
+  sel.value = state.avgRun;
+  sel.addEventListener("change", () => { state.avgRun = sel.value; renderAvg(); });
+  document.querySelectorAll("[data-avgsplit]").forEach(b => b.addEventListener("click", () => { state.avgSplit = b.dataset.avgsplit; document.querySelectorAll("[data-avgsplit]").forEach(z => z.setAttribute("aria-pressed", String(z === b))); renderAvg(); }));
+  document.querySelectorAll("[data-avgq]").forEach(b => b.addEventListener("click", () => { state.avgQ = b.dataset.avgq; document.querySelectorAll("[data-avgq]").forEach(z => z.setAttribute("aria-pressed", String(z === b))); renderAvg(); }));
+}
+
 // ---------- selection ----------
 function selectGame(key) {
   state.game = key;
@@ -696,7 +829,9 @@ function start() {
   latest.forEach(id => state.runs.add(id));
   const last = games().filter(({ g }) => g.status === "finished").pop() || games().pop();
   state.game = gameKey(last.run, last.g);
-  renderStatus(); renderHypotheses(); renderRunsTable(); renderPills(); renderCurves(); renderGameSelect(); renderGame();
+  const finishedRuns = DATA.runs.filter(r => r.games.every(g => g.status === "finished"));
+  state.avgRun = (finishedRuns[finishedRuns.length - 1] || DATA.runs[DATA.runs.length - 1]).id;
+  renderStatus(); renderHypotheses(); renderRunsTable(); setupAvg(); renderAvg(); renderPills(); renderCurves(); renderGameSelect(); renderGame();
 }
 
 // The exporter embeds the data in a <script id="results-data"> tag, so the page works when opened
