@@ -11,7 +11,7 @@ from typing import Any
 
 from swarm_alignment.client import OpenAIChatClient
 from swarm_alignment.engine.game import Game
-from swarm_alignment.engine.live import DEFAULT_BUDGET, LiveGame
+from swarm_alignment.engine.live import DEFAULT_LAPS, DEFAULT_MAX_CALLS, LiveGame
 from swarm_alignment.run import parse_seeds, wait_for_health
 
 
@@ -44,7 +44,9 @@ async def run_all(
                 budget=args.budget,
                 notes=args.notes,
                 read_cost=args.read_cost,
-                parallel=args.laps == "parallel",
+                parallel=args.turn_order == "parallel",
+                laps=args.laps,
+                max_calls=args.max_calls,
             )
         else:
             game = Game(
@@ -83,17 +85,26 @@ def main() -> None:
         "--mode",
         choices=("live", "phased"),
         default="live",
-        help="live: read the board any time, action budget per round. phased: 3 fixed phases.",
+        help="live: read the board any time, rounds measured in laps. phased: 3 fixed phases.",
     )
     parser.add_argument(
-        "--budget", type=int, default=DEFAULT_BUDGET, help="actions per round (live)"
+        "--laps", type=int, default=DEFAULT_LAPS, help="live: laps per round (one step each)"
+    )
+    parser.add_argument(
+        "--max-calls", type=int, default=DEFAULT_MAX_CALLS, help="live: tool calls per step"
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help="live: optional actions per round; off by default (tool calls are free)",
     )
     parser.add_argument(
         "--notes", action=argparse.BooleanOptionalAction, default=True, help="private notes (live)"
     )
     parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
     parser.add_argument(
-        "--laps",
+        "--turn-order",
         choices=("sequential", "parallel"),
         default="sequential",
         help="live: agents step one after another (default) or all at once each lap",
@@ -128,8 +139,12 @@ def main() -> None:
         parser.error("--rounds must be at least 1")
     if args.board_window < 1:
         parser.error("--board-window must be at least 1")
-    if args.budget < 1:
+    if args.budget is not None and args.budget < 1:
         parser.error("--budget must be at least 1")
+    if args.laps < 1:
+        parser.error("--laps must be at least 1")
+    if args.max_calls < 1:
+        parser.error("--max-calls must be at least 1")
     if args.read_cost < 0:
         parser.error("--read-cost must be at least 0")
 

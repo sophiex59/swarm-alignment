@@ -6,7 +6,7 @@ import pytest
 
 from swarm_alignment.engine import live
 from swarm_alignment.engine.game import Game
-from swarm_alignment.engine.live import DEFAULT_BUDGET, LiveGame
+from swarm_alignment.engine.live import DEFAULT_LAPS, DEFAULT_MAX_CALLS, LiveGame
 from swarm_alignment.envs.discovery import Discovery
 
 
@@ -141,7 +141,7 @@ def test_reply_text_and_reasoning_are_private_and_free():
     assert all(c["reasoning"] == "hidden chain of thought" for c in calls)
     assert all(c["content"] == secret for c in calls)
     # three idle replies end the round, and none of them cost an action
-    assert sum(e["type"] == "idle_end" for e in events) == len(env.agents)
+    assert sum(e["type"] == "idle_wait" for e in events) == len(env.agents)
     assert all(c["agent"] for c in calls) and len(calls) == 3 * len(env.agents)
     end = next(e for e in events if e["type"] == "round_end")
     assert set(end["unspent"].values()) == {2}
@@ -162,7 +162,7 @@ def test_private_reply_notice_and_idle_counter_resets_after_a_tool_call():
 
     events = play(env, fn)
     assert all(n.startswith("That reply was private") for n in notices)
-    ends = [e for e in events if e["type"] == "idle_end"]
+    ends = [e for e in events if e["type"] == "idle_wait"]
     assert len(ends) == 2  # each agent: 2 idle, a tool call resets, then 3 idle
 
 
@@ -285,7 +285,10 @@ def test_live_runs_are_deterministic_and_phased_mode_is_unchanged():
     assert first == second
     config = first[0]
     assert (
-        config["mode"] == "live" and config["budget"] == DEFAULT_BUDGET and config["notes"] is True
+        config["mode"] == "live"
+        and config["budget"] is None
+        and config["laps"] == DEFAULT_LAPS
+        and config["notes"] is True
     )
 
     phased = Discovery(seed=9, lb="off", rounds=1)
@@ -384,10 +387,15 @@ def test_read_messageboard_returns_a_bounded_number_of_posts_by_default():
 
 
 def test_rules_only_list_tools_that_exist():
-    off = LiveGame(live_env(lb="off"), ScriptClient(lambda *a: []), notes=False)._rules_text()
+    off = LiveGame(
+        live_env(lb="off"), ScriptClient(lambda *a: []), notes=False, budget=30
+    )._rules_text()
     assert "read_leaderboard" not in off and "read_notes" not in off
-    on = LiveGame(live_env(lb="on"), ScriptClient(lambda *a: []))._rules_text()
-    assert "Free: read_messageboard, read_leaderboard, read_notes, check_actions, end_round" in on
+    on = LiveGame(live_env(lb="on"), ScriptClient(lambda *a: []), budget=30)._rules_text()
+    assert (
+        "Free: read_messageboard, read_leaderboard, read_notes, check_actions, wait, end_round"
+        in on
+    )
 
 
 def test_filtered_read_does_not_hide_unread_posts():
@@ -496,9 +504,10 @@ def test_parallel_laps_land_posts_at_the_end_of_the_lap():
         ]
         assert "hello from" not in first  # nobody's post, not even its own, is visible mid-lap
         assert second.count("hello from") == len(env.agents)
-    assert events[0]["laps"] == "parallel"
-    assert "TIMING." in LiveGame(env, ScriptClient(lambda *a: []), parallel=True)._rules_text()
-    assert "TIMING." not in LiveGame(env, ScriptClient(lambda *a: []))._rules_text()
+    assert events[0]["turn_order"] == "parallel"
+    parallel_rules = LiveGame(env, ScriptClient(lambda *a: []), parallel=True)._rules_text()
+    assert "at the same time" in parallel_rules
+    assert "at the same time" not in LiveGame(env, ScriptClient(lambda *a: []))._rules_text()
 
 
 def test_parallel_laps_are_deterministic_when_calls_finish_in_random_order():
@@ -539,3 +548,126 @@ def test_events_stream_to_the_sink_as_they_happen():
     events = asyncio.run(game.play())
     streamed = [json.loads(line) for line in game.sink.getvalue().splitlines()]
     assert streamed == events
+
+
+# ---- laps, inbox and wait ------------------------------------------------------------------
+
+
+def order_of(events, round_=1):
+    seen = []
+    for e in events:
+        if e["type"] == "model_call" and e["round"] == round_ and e["agent"] not in seen:
+            seen.append(e["agent"])
+    return seen
+
+
+def test_rounds_are_measured_in_laps_and_tool_calls_are_free():
+    env = live_env()
+
+    def fn(agent, round_, step, messages, tools):
+        return [call("post_message", text=f"{agent} {step}"), call("check_actions")]
+
+    events = play(env, fn, laps=4)
+    for agent in env.agents:
+        steps = [e for e in events if e["type"] == "model_call" and e["agent"] == agent]
+        assert len(steps) == 4  # one step per lap, no budget runs out
+    tools = tool_events(events, tool="check_actions")
+    assert tools[0]["cost"] == 0 and tools[0]["actions_left"] is None
+    assert tools[0]["result"].startswith("It is lap 1 of 4 this round.")
+    end = next(e for e in events if e["type"] == "round_end")
+    assert end["laps"] == 4 and end["unspent"] is None
+    rules = LiveGame(env, ScriptClient(lambda *a: []), laps=4)._rules_text()
+    assert "A round lasts up to 4 laps" in rules and "Tool calls cost nothing" in rules
+    assert "MESSAGES TO YOU." in rules and "WAITING." in rules
+
+
+def test_tool_calls_per_step_are_capped():
+    env = live_env(n_agents=2)
+
+    def fn(agent, round_, step, messages, tools):
+        return [call("read_notes")] * 7 if step == 0 else []
+
+    events = play(env, fn, laps=1)
+    for agent in env.agents:
+        assert sum(e["type"] == "call_cap" and e["agent"] == agent for e in events) == 2
+        results = [e["result"] for e in tool_events(events, agent=agent)]
+        assert sum(r.startswith("Error: at most 5 tool calls") for r in results) == 2
+    assert DEFAULT_MAX_CALLS == 5
+
+
+def test_mentions_are_delivered_once_to_the_inbox():
+    env = live_env(n_agents=2)
+    a, b = env.agents
+    inboxes = {}
+
+    def fn(agent, round_, step, messages, tools):
+        inboxes.setdefault(agent, []).append(
+            messages[-1]["content"] if messages[-1]["role"] == "user" else ""
+        )
+        if agent == a and step == 0:
+            return [call("post_message", text=f"@{b} what is E-1?")]
+        return [call("check_actions")]
+
+    events = play(env, fn, laps=3)
+    got = [text for text in inboxes[b] if "New messages for you" in text]
+    assert len(got) == 1 and f"@{b} what is E-1?" in got[0]
+    assert not any("New messages for you" in text for text in inboxes[a])
+    inbox_events = [e for e in events if e["type"] == "inbox"]
+    assert [e["agent"] for e in inbox_events] == [b]
+
+
+def test_waiting_agent_is_woken_by_a_mention_and_can_reply():
+    env = live_env(n_agents=2)
+    first, second = env.agents  # roles assigned after we learn the order
+
+    def fn(agent, round_, step, messages, tools):
+        holder, asker = roles["holder"], roles["asker"]
+        if agent == holder:
+            if step == 0:
+                return [call("wait")]
+            if "You were waiting and a teammate mentioned you" in messages[-1]["content"]:
+                return [call("post_message", text=f"@{asker} it is 1970-01-01"), call("wait")]
+            return []
+        if step == 0:
+            return [call("check_actions")]
+        if step == 1:
+            return [call("post_message", text=f"@{holder} what is E-1?")]
+        if "it is 1970-01-01" in messages[-1]["content"]:
+            return [call("submit_answer", birthday="1970-01-01"), call("end_round")]
+        return [call("check_actions")]
+
+    probe = play(env, lambda *a: [call("check_actions")], laps=1)
+    order = order_of(probe)
+    roles = {"holder": order[0], "asker": order[1]}
+    events = play(env, fn, laps=6)
+    holder, asker = roles["holder"], roles["asker"]
+    holder_steps = [e["lap"] for e in events if e["type"] == "model_call" and e["agent"] == holder]
+    # The holder steps first in each lap, so the ask made in lap 2 wakes it in lap 3.
+    assert holder_steps == [1, 3]
+    assert any(e["type"] == "wake" and e["agent"] == holder for e in events)
+    replies = [e for e in events if e["type"] == "post" and e["agent"] == holder]
+    assert replies and asker in replies[0]["mentions"]
+    asker_inbox = [e for e in events if e["type"] == "inbox" and e["agent"] == asker]
+    assert asker_inbox and "1970-01-01" in asker_inbox[0]["text"]
+    end = next(e for e in events if e["type"] == "round_end")
+    assert end["left"] == [asker] and end["waiting"] == [holder]
+    assert end["laps"] < 6  # ended early: nobody left who could act
+
+
+def test_round_ends_early_when_everyone_waits_and_end_round_is_not_woken():
+    env = live_env()
+    events = play(env, lambda a, r, step, m, t: [call("wait")] if step == 0 else [], laps=8)
+    assert next(e for e in events if e["type"] == "round_end")["laps"] == 1
+
+    leaver = env.agents[0]
+
+    def fn(agent, round_, step, messages, tools):
+        if agent == leaver:
+            return [call("end_round")] if step == 0 else [call("check_actions")]
+        if step == 0:
+            return [call("post_message", text=f"@{leaver} are you there?")]
+        return [call("wait")]
+
+    events = play(env, fn, laps=8)
+    assert sum(e["type"] == "model_call" and e["agent"] == leaver for e in events) == 1
+    assert not any(e["type"] == "wake" and e["agent"] == leaver for e in events)

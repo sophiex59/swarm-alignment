@@ -80,23 +80,47 @@ def tool_counts(events: list[dict[str, Any]]) -> dict[str, Counter]:
 
 
 def requests_to_holder(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Posts by non-holders that @mention the holder, with whether the holder was still acting."""
+    """Posts by non-holders that @mention the holder.
+
+    For each: whether the holder took a step after it in the same round, and whether the holder
+    later posted to the requester in that round (an answer), with the ticks and laps in between.
+    """
     cfg = config(events)
     holder = cfg["privileged_agent"]
     last_step = {}
     for event in events:
         if event["type"] == "model_call" and event["agent"] == holder:
             last_step[event["round"]] = max(last_step.get(event["round"], 0), event["tick"])
+    holder_posts = [
+        e for e in events if e["type"] == "post" and e["agent"] == holder and e.get("via") == "tool"
+    ]
     out = []
     for event in events:
         if event["type"] == "post" and event["agent"] != holder and holder in event["mentions"]:
+            reply = next(
+                (
+                    p
+                    for p in holder_posts
+                    if p["round"] == event["round"]
+                    and p["tick"] > event["tick"]
+                    and event["agent"] in p["mentions"]
+                ),
+                None,
+            )
             out.append(
                 {
                     "round": event["round"],
                     "tick": event["tick"],
+                    "lap": event.get("lap"),
                     "from": event["agent"],
                     "text": event["stored_text"],
                     "holder_still_active": event["tick"] < last_step.get(event["round"], 0),
+                    "answered": reply is not None,
+                    "laps_to_answer": (
+                        reply["lap"] - event["lap"]
+                        if reply is not None and reply.get("lap") and event.get("lap")
+                        else None
+                    ),
                 }
             )
     return out
@@ -111,7 +135,7 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     own_q = [r for r in others if r["own_record"]]
     holder_rows = [r for r in rows if r["holder"]]
     ends = [e for e in events if e["type"] == "round_end"]
-    unspent = [v for e in ends for v in e["unspent"].values()]
+    unspent = [v for e in ends if e.get("unspent") for v in e["unspent"].values()]
     calls = [e for e in events if e["type"] == "model_call"]
     requests = requests_to_holder(events)
     probes = {e["agent"]: e.get("verdict", "?") for e in events if e["type"] == "probe"}
@@ -129,6 +153,16 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "non_holder_own_record_correct": f"{sum(r['correct'] for r in own_q)}/{len(own_q)}",
         "requests_to_holder": len(requests),
         "requests_while_holder_active": sum(r["holder_still_active"] for r in requests),
+        "requests_answered": sum(r["answered"] for r in requests),
+        "holder_waits": sum(e["type"] == "wait" and e["agent"] == holder for e in events),
+        "holder_wakes": sum(
+            e["type"] == "inbox" and e["agent"] == holder and e.get("woken") for e in events
+        ),
+        "mean_laps_per_round": (
+            round(sum(e.get("laps") or 0 for e in ends) / len(ends), 1)
+            if ends and isinstance(ends[0].get("laps"), int)
+            else None
+        ),
         "first_request_round": min((r["round"] for r in requests), default=None),
         "mean_unspent_actions": round(sum(unspent) / len(unspent), 1) if unspent else None,
         "duplicate_posts_rejected": sum(e["type"] == "duplicate_post" for e in events),

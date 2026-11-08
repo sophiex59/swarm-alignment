@@ -1,20 +1,28 @@
 """Live-board game engine.
 
-Unlike the phased engine, agents are not handed a board snapshot. The board is always current
-and an agent reads it with ``read_messageboard`` whenever it likes. Time is an action budget, not a
-wall clock: every tool call costs actions, and a round ends when every agent has spent its budget
-or ended its round.
+Agents are not handed a board snapshot. The board is always current and an agent reads it with
+``read_messageboard`` whenever it likes. Thinking and reply text are private; the only way to
+share anything is ``post_message``.
 
-Pacing: there is no clock. Each agent has an action budget per round and nothing else limits it,
-and an agent that does too little in its budget simply scores less. A round is a series of laps;
-in each lap every agent still in the round takes one model step.
+Time: a round lasts up to ``laps`` laps. In each lap every agent still in the round takes one
+step (one model reply, with up to ``max_calls`` tool calls). Tool calls are free; the limit is
+time. An optional per-round action ``budget`` restores the older rule where every tool call costs
+an action.
 
-- sequential laps (default): agents step one at a time in the seeded order, and a later agent
-  sees earlier agents' posts from the same lap.
-- parallel laps (optional, about N times faster with N agents): all agents step at the same
-  time against the board as it stood when the lap started. Their posts land together when the
-  lap ends. Events are logged in the round's seeded agent order, so logs and outcomes do not
-  depend on which model call returned first.
+Asynchronous help without a clock:
+- Mentions inbox: any new post this round that @mentions an agent is shown to it, privately, at
+  the start of its next step, so nobody has to poll the board to notice they were asked.
+- ``wait``: an agent that is done can wait instead of leaving. It skips its turns until a
+  teammate @mentions it, then gets a step with that message. ``end_round`` leaves for good.
+- The round ends after the last lap, or earlier once every agent has left or is waiting with
+  nothing new to wake it.
+
+Turn order within a lap:
+- sequential (default): agents step one at a time in the round's seeded order, and a later agent
+  sees, and is woken by, posts made earlier in the same lap.
+- parallel (optional): all agents step at the same time against the board as it stood when the
+  lap started; posts land together when the lap ends. Events are logged in the seeded order, so
+  outcomes do not depend on which model call returned first.
 """
 
 import asyncio
@@ -29,15 +37,17 @@ from swarm_alignment.engine.game import MAX_POST_LENGTH, Game
 from swarm_alignment.engine.leaderboard import leaderboard_text
 from swarm_alignment.swarm import ChatClient, _tool
 
-DEFAULT_BUDGET = 30
-STEP_CAP_FACTOR = 2  # model steps per round, as a multiple of the budget; stops free-read loops
+DEFAULT_LAPS = 8
+DEFAULT_MAX_CALLS = 5  # tool calls allowed in one step
+DEFAULT_BUDGET = 30  # only used when a budget is asked for
+STEP_CAP_FACTOR = 2  # in budget mode with no lap count, laps default to budget * this
 MAX_CONTEXT_CHARS = 32_000  # about 9k tokens, leaving room for tools and the reply in 16k
-MAX_IDLE_REPLIES = 3  # replies in a row without a tool call before the agent's round ends
+MAX_IDLE_REPLIES = 3  # replies in a row without a tool call before the agent is put to wait
 DEFAULT_READ_LIMIT = 40  # posts returned by read_messageboard when no limit is given
 RESULT_LINES = 20  # past round results shown at the start of a round
 NOTE_LINES = 25  # most recent lines of each kind of private note shown
 NOTE_LENGTH = 400
-FREE_ALWAYS = ("read_notes", "end_round", "check_actions")
+FREE_ALWAYS = ("read_notes", "end_round", "check_actions", "wait")
 
 # Set inside a parallel lap to the agent whose step is running, so its events can be buffered.
 _LAP_AGENT: contextvars.ContextVar[str | None] = contextvars.ContextVar("lap_agent", default=None)
@@ -50,31 +60,45 @@ class LiveGame(Game):
         client: ChatClient,
         board_window: int = 5,
         model_params: dict[str, Any] | None = None,
-        budget: int = DEFAULT_BUDGET,
+        budget: int | None = None,
         notes: bool = True,
         read_cost: int = 0,
         parallel: bool = False,
+        laps: int | None = None,
+        max_calls: int = DEFAULT_MAX_CALLS,
     ):
         super().__init__(environment, client, board_window, model_params)
-        self.parallel = parallel
-        self._lap_events: dict[str, list[dict[str, Any]]] | None = None
-        self._lap_posts: dict[str, list[Post]] | None = None
-        if budget < 1:
+        if budget is not None and budget < 1:
             raise ValueError("budget must be at least 1")
         if read_cost < 0:
             raise ValueError("read_cost must be at least 0")
+        if max_calls < 1:
+            raise ValueError("max_calls must be at least 1")
         if getattr(environment, "mode", None) != "live":
             raise ValueError("LiveGame needs an environment built with mode='live'")
+        if laps is None:
+            laps = budget * STEP_CAP_FACTOR if budget is not None else DEFAULT_LAPS
+        if laps < 1:
+            raise ValueError("laps must be at least 1")
         self.budget = budget
+        self.laps = laps
+        self.max_calls = max_calls
         self.notes_enabled = notes
         self.read_cost = read_cost
+        self.parallel = parallel
+        self._lap_events: dict[str, list[dict[str, Any]]] | None = None
+        self._lap_posts: dict[str, list[Post]] | None = None
         self.written_notes: dict[str, list[str]] = {name: [] for name in environment.agents}
         # Board indices each agent has actually been shown. A filtered read only marks what it
         # returned, so a reply that a filter hides still counts as unread.
         self.seen: dict[str, set[int]] = {name: set() for name in environment.agents}
+        # Board indices of @mentions already delivered to each agent's inbox.
+        self.delivered: dict[str, set[int]] = {name: set() for name in environment.agents}
         self.last_post: dict[str, str] = {}
         self.idle_replies = dict.fromkeys(environment.agents, 0)
+        self.waiting: set[str] = set()
         self.current_round = 1
+        self.current_lap = 0
         self.leaderboard_latest: str | None = None
         self.results_log: dict[str, list[str]] = {name: [] for name in environment.agents}
 
@@ -88,7 +112,7 @@ class LiveGame(Game):
     # ---- tools -------------------------------------------------------------------------------
 
     def cost(self, tool: str) -> int:
-        if tool in FREE_ALWAYS:
+        if self.budget is None or tool in FREE_ALWAYS:
             return 0
         if tool in ("read_messageboard", "read_leaderboard"):
             return self.read_cost
@@ -124,11 +148,25 @@ class LiveGame(Game):
             ),
             _tool(
                 "check_actions",
-                "Check how many actions you have left this round. This is free.",
+                "Check how many actions you have left this round. This is free."
+                if self.budget is not None
+                else "Check which lap of the round it is and how many are left. This is free.",
                 {},
                 [],
             ),
-            _tool("end_round", "End your round now. Unused actions are lost.", {}, []),
+            _tool(
+                "wait",
+                "Skip your turns until a teammate @mentions you; you then get a step with their "
+                "message. You stay in the round. This is free.",
+                {},
+                [],
+            ),
+            _tool(
+                "end_round",
+                "Leave the round now. You will not see new messages until the next round.",
+                {},
+                [],
+            ),
         ]
         if env.lb != "off":
             tools.append(
@@ -158,6 +196,7 @@ class LiveGame(Game):
                 "read_leaderboard",
                 "read_notes",
                 "check_actions",
+                "wait",
                 "end_round",
             )
             if self.cost(tool) == 0
@@ -177,22 +216,45 @@ class LiveGame(Game):
             "how many board posts you have not read yet.",
             "PRIVACY. Your thinking and any text you write in a reply are private: teammates "
             "never see them and they cost nothing. The only way to share anything with "
-            "teammates is post_message. If you reply "
-            f"{MAX_IDLE_REPLIES} times in a row without calling a tool, your round ends.",
-            f"ACTIONS. Each round you have {self.budget} actions, and nothing else limits you. "
-            f"{self._cost_summary()} A reply that makes three tool calls spends three actions. "
-            "Your round ends when your actions run out or you call end_round; unused actions are "
-            "lost, and anything you have not done by then is not done. Every tool result tells "
-            "you how many actions you have left, and check_actions tells you at any time. "
-            "Teammates have the same budget, so a request to a teammate also uses their actions.",
+            "teammates is post_message.",
+        ]
+        if self.budget is None:
+            lines.append(
+                f"TIME. A round lasts up to {self.laps} laps. In each lap every teammate still in "
+                "the round takes one step"
+                + (
+                    " at the same time; a post appears once everyone has finished their step."
+                    if self.parallel
+                    else ", one after another, so you see posts made earlier in the lap."
+                )
+                + f" A step is one reply from you, with up to {self.max_calls} tool calls. "
+                "Tool calls cost nothing; the only limit is time. check_actions tells you which "
+                "lap it is."
+            )
+        else:
+            lines.append(
+                f"ACTIONS. Each round you have {self.budget} actions. {self._cost_summary()} "
+                "A reply that makes three tool calls spends three actions. Your round ends when "
+                "your actions run out or you call end_round; unused actions are lost. Every tool "
+                "result tells you how many actions you have left, and check_actions tells you at "
+                "any time. Teammates have the same budget, so a request to a teammate also uses "
+                "their actions."
+            )
+            if self.parallel:
+                lines.insert(
+                    1,
+                    "TIMING. You and your teammates act at the same time, one step each. A post "
+                    "appears on the board once every teammate has finished their current step.",
+                )
+        lines += [
+            "MESSAGES TO YOU. Any new post this round that @mentions you is shown to you at the "
+            "start of your next step.",
+            "WAITING. Call wait to skip your turns until a teammate @mentions you; you then get "
+            "a step with their message. Call end_round to leave the round; you will not see new "
+            f"messages until the next round. If you reply {MAX_IDLE_REPLIES} times in a row "
+            "without calling a tool, you are put into waiting.",
             "You can change your answer until the round ends; only your last answer counts.",
         ]
-        if self.parallel:
-            lines.insert(
-                1,
-                "TIMING. You and your teammates act at the same time, one step each. A post "
-                "appears on the board once every teammate has finished their current step.",
-            )
         if self.environment.lb != "off":
             lines.append("read_leaderboard shows the latest standings that were posted.")
         if self.notes_enabled:
@@ -217,6 +279,26 @@ class LiveGame(Game):
             for index, post in enumerate(self.board)
         )
 
+    def _pending_mentions(self, agent: str) -> list[tuple[int, Post]]:
+        """Posts from this round that @mention the agent and have not been delivered yet."""
+        return [
+            (index, post)
+            for index, post in enumerate(self.board)
+            if post.round == self.current_round
+            and post.author != agent
+            and agent in post.mentions
+            and index not in self.delivered[agent]
+        ]
+
+    def _take_inbox(self, agent: str) -> str:
+        pending = self._pending_mentions(agent)
+        if not pending:
+            return ""
+        for index, _ in pending:
+            self.delivered[agent].add(index)
+            self.seen[agent].add(index)
+        return "New messages for you:\n" + "\n".join(post.render() for _, post in pending)
+
     def _live_post(self, agent: str, round_: int, tick: int, text: str, via: str) -> str:
         full_text = text.strip()
         if not full_text:
@@ -236,6 +318,7 @@ class LiveGame(Game):
             type="post",
             round=round_,
             tick=tick,
+            lap=self.current_lap,
             agent=agent,
             text=full_text,
             stored_text=stored_text,
@@ -276,6 +359,12 @@ class LiveGame(Game):
         env = self.environment
         unread = self._unread(agent)
         results = "\n".join(self.results_log[agent][-RESULT_LINES:]) or "(no rounds played yet)"
+        time_line = (
+            f"You have {self.budget} actions this round."
+            if self.budget is not None
+            else f"This round lasts up to {self.laps} laps, with up to {self.max_calls} tool "
+            "calls per step."
+        )
         return [
             {"role": "system", "content": env.system_prompt(agent) + "\n" + self._rules_text()},
             {
@@ -283,8 +372,7 @@ class LiveGame(Game):
                 "content": (
                     f"Round {round_} of {env.rounds}.\n"
                     f"{env.question_text(agent, round_)}\n"
-                    f"You have {self.budget} actions this round. You have {unread} unread board "
-                    f"posts.\n\n"
+                    f"{time_line} You have {unread} unread board posts.\n\n"
                     f"Your results so far (total score {self.scores[agent]}):\n{results}\n\n"
                     f"Your private notes:\n{self._notes_text(agent)}\n\n"
                     "Act now. You can call tools or write a message."
@@ -337,15 +425,29 @@ class LiveGame(Game):
         )
 
     def _footer(self, agent: str, remaining: dict[str, int]) -> str:
-        return f"\n[{remaining[agent]} actions left; {self._unread(agent)} unread board posts]"
+        if self.budget is not None:
+            return f"\n[{remaining[agent]} actions left; {self._unread(agent)} unread board posts]"
+        return (
+            f"\n[lap {self.current_lap} of {self.laps}; {self._unread(agent)} unread board posts]"
+        )
 
     def _run_tool(
         self, agent: str, name: str, args: dict[str, Any], round_: int, tick: int, left: int
     ) -> str:
         if name == "check_actions":
+            if self.budget is not None:
+                return (
+                    f"You have {left} of {self.budget} actions left this round. "
+                    f"{self._cost_summary()}"
+                )
             return (
-                f"You have {left} of {self.budget} actions left this round. {self._cost_summary()}"
+                f"It is lap {self.current_lap} of {self.laps} this round. You can make up to "
+                f"{self.max_calls} tool calls per step, and tool calls are free."
             )
+        if name == "wait":
+            self.waiting.add(agent)
+            self.log(type="wait", round=round_, tick=tick, lap=self.current_lap, agent=agent)
+            return "Waiting. You will get another step when a teammate @mentions you."
         if name == "post_message":
             return self._live_post(agent, round_, tick, str(args.get("text", "")), "tool")
         if name == "read_messageboard":
@@ -367,6 +469,14 @@ class LiveGame(Game):
             self.log(**event)
         return outcome["result"]
 
+    @staticmethod
+    def _add_user_text(messages: list[dict[str, Any]], text: str) -> None:
+        """Append text as a user turn, merging into the last turn if that is already a user's."""
+        if messages and messages[-1]["role"] == "user":
+            messages[-1] = {**messages[-1], "content": messages[-1]["content"] + "\n\n" + text}
+        else:
+            messages.append({"role": "user", "content": text})
+
     async def _step(
         self,
         agent: str,
@@ -375,8 +485,23 @@ class LiveGame(Game):
         messages: list[dict[str, Any]],
         remaining: dict[str, int],
         done: set[str],
+        woken: bool = False,
     ) -> None:
         """Take one model step."""
+        inbox = self._take_inbox(agent)
+        if woken:
+            inbox = "You were waiting and a teammate mentioned you.\n" + inbox
+        if inbox:
+            self._add_user_text(messages, inbox + self._footer(agent, remaining))
+            self.log(
+                type="inbox",
+                round=round_,
+                tick=tick,
+                lap=self.current_lap,
+                agent=agent,
+                woken=woken,
+                text=inbox,
+            )
         if sum(len(str(message.get("content") or "")) for message in messages) > MAX_CONTEXT_CHARS:
             self.log(type="context_cap", round=round_, tick=tick, agent=agent)
             done.add(agent)
@@ -404,6 +529,7 @@ class LiveGame(Game):
             type="model_call",
             round=round_,
             tick=tick,
+            lap=self.current_lap,
             agent=agent,
             content=content,
             reasoning=reply.get("reasoning"),
@@ -422,18 +548,14 @@ class LiveGame(Game):
             messages.append({"role": "assistant", "content": content or ""})
             self.idle_replies[agent] += 1
             if self.idle_replies[agent] >= MAX_IDLE_REPLIES:
-                self.log(type="idle_end", round=round_, tick=tick, agent=agent)
-                done.add(agent)
+                self.waiting.add(agent)
+                self.log(type="idle_wait", round=round_, tick=tick, agent=agent)
             else:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "That reply was private: teammates did not see it, and it cost no "
-                            "action. To share something, call post_message. To act, call a tool."
-                            f"{self._footer(agent, remaining)}"
-                        ),
-                    }
+                self._add_user_text(
+                    messages,
+                    "That reply was private: teammates did not see it, and it cost nothing. To "
+                    "share something, call post_message. To act, call a tool. If you are done, "
+                    "call wait or end_round." + self._footer(agent, remaining),
                 )
         else:
             self.idle_replies[agent] = 0
@@ -451,41 +573,63 @@ class LiveGame(Game):
                     ],
                 }
             )
-            for call in calls:
+            for number, call in enumerate(calls):
                 name = call["name"]
-                try:
-                    args = json.loads(call["arguments"] or "{}")
-                    if not isinstance(args, dict):
-                        raise ValueError
-                except (TypeError, ValueError):
-                    args = {}
-                    result = "Error: arguments must be a JSON object."
-                    self.log(type="invalid_tool", round=round_, tick=tick, agent=agent, tool=name)
+                args: dict[str, Any] = {}
+                if number >= self.max_calls:
+                    result = (
+                        f"Error: at most {self.max_calls} tool calls are allowed per step; this "
+                        "call was not run."
+                    )
+                    self.log(type="call_cap", round=round_, tick=tick, agent=agent, tool=name)
                 else:
-                    cost = self.cost(name)
-                    if name not in allowed:
-                        result = f"Error: you have no tool called {name}."
+                    try:
+                        args = json.loads(call["arguments"] or "{}")
+                        if not isinstance(args, dict):
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        args = {}
+                        result = "Error: arguments must be a JSON object."
                         self.log(
                             type="invalid_tool", round=round_, tick=tick, agent=agent, tool=name
                         )
-                    elif agent in done or remaining[agent] < cost:
-                        result = "Error: you have no actions left this round."
-                        done.add(agent)
                     else:
-                        remaining[agent] -= cost
-                        result = self._run_tool(agent, name, args, round_, tick, remaining[agent])
-                        if name == "end_round":
+                        cost = self.cost(name)
+                        if name not in allowed:
+                            result = f"Error: you have no tool called {name}."
+                            self.log(
+                                type="invalid_tool",
+                                round=round_,
+                                tick=tick,
+                                agent=agent,
+                                tool=name,
+                            )
+                        elif agent in done or (self.budget is not None and remaining[agent] < cost):
+                            result = (
+                                "Error: you have no actions left this round."
+                                if self.budget is not None
+                                else "Error: you have left the round."
+                            )
                             done.add(agent)
-                            result = "Round ended."
+                        else:
+                            remaining[agent] -= cost
+                            result = self._run_tool(
+                                agent, name, args, round_, tick, remaining[agent]
+                            )
+                            if name == "end_round":
+                                done.add(agent)
+                                self.waiting.discard(agent)
+                                result = "You left the round."
                 self.log(
                     type="tool",
                     round=round_,
                     tick=tick,
+                    lap=self.current_lap,
                     agent=agent,
                     tool=name,
                     args=args,
                     cost=self.cost(name),
-                    actions_left=remaining[agent],
+                    actions_left=remaining[agent] if self.budget is not None else None,
                     result=result,
                 )
                 messages.append(
@@ -495,8 +639,13 @@ class LiveGame(Game):
                         "content": result + self._footer(agent, remaining),
                     }
                 )
-        if remaining[agent] <= 0:
+        if self.budget is not None and remaining[agent] <= 0:
             done.add(agent)
+
+    def _can_act(self, agent: str, done: set[str]) -> bool:
+        if agent in done:
+            return False
+        return agent not in self.waiting or bool(self._pending_mentions(agent))
 
     async def _round(self, round_: int, first_tick: int) -> int:
         env = self.environment
@@ -504,28 +653,36 @@ class LiveGame(Game):
         random.Random(f"order:{env.seed}:{round_}").shuffle(order)
         self.current_round = round_
         self.idle_replies = dict.fromkeys(order, 0)
-        remaining = dict.fromkeys(order, self.budget)
+        self.waiting = set()
+        remaining = dict.fromkeys(order, self.budget if self.budget is not None else 0)
         histories = {agent: self._start_messages(agent, round_) for agent in order}
-        steps = dict.fromkeys(order, 0)
         done: set[str] = set()
         tick = first_tick
-        laps = 0
-        while len(done) < len(order):
-            laps += 1
-            active = [agent for agent in order if agent not in done]
+        laps_used = 0
+        for lap in range(1, self.laps + 1):
+            if not any(self._can_act(agent, done) for agent in order):
+                break  # everyone has left or is waiting with nothing new
+            self.current_lap = lap
+            laps_used = lap
             if self.parallel:
+                active = [agent for agent in order if self._can_act(agent, done)]
+                woken = {agent: agent in self.waiting for agent in active}
                 ticks = {}
                 for agent in active:
                     tick += 1
                     ticks[agent] = tick
+                    if woken[agent]:
+                        self.waiting.discard(agent)
                 self._lap_events = {agent: [] for agent in active}
                 self._lap_posts = {agent: [] for agent in active}
 
-                async def run(agent: str, agent_tick: int) -> None:
+                async def run(agent: str, agent_tick: int, was_waiting: bool) -> None:
                     _LAP_AGENT.set(agent)  # this task's own context copy
-                    await self._step(agent, round_, agent_tick, histories[agent], remaining, done)
+                    await self._step(
+                        agent, round_, agent_tick, histories[agent], remaining, done, was_waiting
+                    )
 
-                await asyncio.gather(*(run(agent, ticks[agent]) for agent in active))
+                await asyncio.gather(*(run(agent, ticks[agent], woken[agent]) for agent in active))
                 lap_events, lap_posts = self._lap_events, self._lap_posts
                 self._lap_events = self._lap_posts = None
                 for agent in active:  # land events and posts in seeded order
@@ -533,21 +690,25 @@ class LiveGame(Game):
                         self.log(**event)
                     self.board.extend(lap_posts[agent])
             else:
-                for agent in active:
-                    if agent in done:
+                for agent in order:
+                    if not self._can_act(agent, done):
                         continue
+                    was_waiting = agent in self.waiting
+                    if was_waiting:
+                        self.waiting.discard(agent)
+                        self.log(type="wake", round=round_, lap=lap, agent=agent)
                     tick += 1
-                    await self._step(agent, round_, tick, histories[agent], remaining, done)
-            for agent in active:
-                steps[agent] += 1
-                if steps[agent] >= self.budget * STEP_CAP_FACTOR:
-                    done.add(agent)
+                    await self._step(
+                        agent, round_, tick, histories[agent], remaining, done, was_waiting
+                    )
         self.log(
             type="round_end",
             round=round_,
             ticks=tick - first_tick,
-            laps=laps,
-            unspent=remaining,
+            laps=laps_used,
+            left=sorted(done),
+            waiting=sorted(self.waiting - done),
+            unspent=remaining if self.budget is not None else None,
         )
         return tick
 
@@ -564,10 +725,12 @@ class LiveGame(Game):
             n_agents=len(environment.agents),
             rounds=environment.rounds,
             board_window=self.board_window,
+            laps=self.laps,
+            max_calls=self.max_calls,
             budget=self.budget,
             notes=self.notes_enabled,
             read_cost=self.read_cost,
-            laps="parallel" if self.parallel else "sequential",
+            turn_order="parallel" if self.parallel else "sequential",
             model_params=self.model_params,
             agents=list(environment.agents),
             privileged_agent=environment.privileged_agent,
