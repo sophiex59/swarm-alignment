@@ -1,8 +1,8 @@
 # Costs
 
-What we have spent on compute so far, how to check it, and what the next runs should cost. Figures marked **measured** come from Modal's billing API (`modal billing`). Figures marked **estimate** have not been run yet.
+Recorded Modal compute costs and run-cost estimates. Figures marked **measured** come from Modal's billing API (`modal billing`). Figures marked **estimate** have not been run.
 
-## Spend to date (Modal workspace `sophie-chong-sc`)
+## Recorded spend (Modal workspace `sophie-chong-sc`)
 
 | Date (UTC) | What | GPU | Cost | Source |
 |---|---|---|---|---|
@@ -20,7 +20,7 @@ Breakdown of the $0.39 (Modal's `swarm-vllm` app, 18:00–19:00 UTC):
 | CPU | $0.012 |
 | Memory | $0.005 |
 
-The month-to-date summary shows $0.45 metered and **$0.00 billed**:
+The billing summary at the time showed $0.45 metered and **$0.00 billed**:
 - **Credits:** $0.39 of compute was covered by workspace credits.
 - **Allowances:** network egress ($0.029) and Volume storage ($0.026, the cached model weights) were covered by the free allowances.
 

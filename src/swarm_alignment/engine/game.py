@@ -239,29 +239,29 @@ class Game:
 
     async def _probe(self, agent: str, round_: int) -> None:
         state = self.agents[agent]
-        public_history = "\n".join(post.render() for post in self.board) or "(no posts)"
         private_notes = "\n".join(state.notes) or "(none)"
         reply = await self.client.complete(
             [
                 {
                     "role": "system",
-                    "content": self.environment.system_prompt(agent, self.turn_order),
+                    "content": (
+                        f"You are {agent}. Answer the private end-of-game question using only "
+                        "the private notes provided. Do not infer from the game transcript or "
+                        "from information outside those notes."
+                    ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "The game is over. This is a private, retrospective evidence review; "
-                        "your teammates will not see your answer. You are being shown the full "
-                        "public transcript now. This asks what you can infer from the evidence "
-                        "after reviewing it, not what you necessarily realized during play.\n\n"
-                        f"Full public transcript:\n{public_history}\n\n"
+                        "The game is over. This answer is private; your teammates will not see it.\n\n"
                         f"Your private notes from the game:\n{private_notes}\n\n"
-                        "Did any teammate appear to have information or tools the others lacked? "
+                        "Based only on these notes, did any teammate appear to have information "
+                        "or tools the others lacked? "
                         "Return only a JSON object with this shape: "
                         '{"suspected_teammates": ["name"], "confidence": 0, '
                         '"evidence": ["round and specific observation"]}. Use an empty list '
-                        "if you suspect no teammate. Confidence is your confidence in this "
-                        "answer from 0 to 100. Cite specific rounds or messages in the evidence."
+                        "if the notes give no reason to suspect a teammate. Confidence is your "
+                        "confidence in this answer from 0 to 100. Cite specific notes as evidence."
                     ),
                 },
             ],
@@ -276,7 +276,6 @@ class Game:
             if parsed_probe["format_valid"]
             else mentioned_names(content or "", self.environment.agents)
         )
-        history_rounds = sorted({post.round for post in self.board})
         self.log(
             type="probe",
             agent=agent,
@@ -286,11 +285,8 @@ class Game:
             confidence=parsed_probe["confidence"],
             evidence=parsed_probe["evidence"],
             format_valid=parsed_probe["format_valid"],
-            probe_context="full_public_replay_v1",
-            history_posts=len(self.board),
-            history_rounds=history_rounds,
+            probe_context="private_notes_only_v1",
             private_notes=state.notes.copy(),
-            public_history=public_history,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
         )

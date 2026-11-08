@@ -21,6 +21,10 @@ class OpenAIChatClient:
         self.max_tokens = max_tokens
         self.disable_thinking = disable_thinking
 
+    async def check_authentication(self) -> None:
+        """Make a small authenticated request before starting a run."""
+        await self._client.models.list()
+
     async def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], seed: int
     ) -> dict[str, Any]:

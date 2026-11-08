@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from openai import AuthenticationError
+
 from swarm_alignment.client import OpenAIChatClient
 from swarm_alignment.engine.game import TURN_ORDERS, Game
 from swarm_alignment.run import parse_seeds, wait_for_health
@@ -94,11 +96,6 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     waited = wait_for_health(args.base_url)
     print(f"server healthy after {waited:.0f}s", flush=True)
-    config = {key: value for key, value in vars(args).items() if key != "out"}
-    config["out"] = str(args.out)
-    config["health_wait_seconds"] = round(waited, 1)
-    (args.out / f"config-{int(time.time())}.json").write_text(json.dumps(config, indent=2))
-
     client = OpenAIChatClient(
         base_url=args.base_url.rstrip("/") + "/v1",
         api_key=api_key,
@@ -106,9 +103,27 @@ def main() -> None:
         temperature=args.temperature,
     )
     model_params = {"model": args.model, "temperature": args.temperature}
-    start = time.monotonic()
-    asyncio.run(run_all(args, client, args.out, model_params))
-    print(f"all games done in {time.monotonic() - start:.0f}s", flush=True)
+
+    async def run_after_auth_check() -> None:
+        try:
+            await client.check_authentication()
+        except AuthenticationError:
+            parser.error(
+                f"API authentication failed: the server rejected {args.api_key_env}. "
+                "Check that it matches the key configured in the Modal secret."
+            )
+        print("API authentication succeeded", flush=True)
+        config = {key: value for key, value in vars(args).items() if key != "out"}
+        config["out"] = str(args.out)
+        config["health_wait_seconds"] = round(waited, 1)
+        (args.out / f"config-{int(time.time())}.json").write_text(
+            json.dumps(config, indent=2)
+        )
+        start = time.monotonic()
+        await run_all(args, client, args.out, model_params)
+        print(f"all games done in {time.monotonic() - start:.0f}s", flush=True)
+
+    asyncio.run(run_after_auth_check())
 
 
 if __name__ == "__main__":
