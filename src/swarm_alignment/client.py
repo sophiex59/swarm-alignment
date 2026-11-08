@@ -25,11 +25,11 @@ class OpenAIChatClient:
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], seed: int
     ) -> dict[str, Any]:
         extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+        tool_kwargs: dict[str, Any] = {"tools": tools, "tool_choice": "auto"} if tools else {}
         resp = await self._client.chat.completions.create(
             model=self.model,
             messages=messages,
-            tools=tools,
-            tool_choice="auto",
+            **tool_kwargs,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             seed=seed,

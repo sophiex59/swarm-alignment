@@ -2,6 +2,8 @@
 
 Deploy:   uv run --group modal modal deploy infra/vllm_server.py
 Stop:     uv run --group modal modal app stop swarm-vllm
+Other model: SWARM_APP=swarm-vllm-32b SWARM_MODEL=Qwen/Qwen3-32B-FP8 SWARM_MODEL_REVISION=<sha> \
+          SWARM_GPU=H100 uv run --group modal modal deploy infra/vllm_server.py
 
 Requests need ``Authorization: Bearer $VLLM_API_KEY``; the key lives in the Modal Secret
 ``swarm-vllm`` (see docs/running.md). Adapted from https://modal.com/docs/examples/vllm_inference.
@@ -26,6 +28,7 @@ image = (
     .env(
         {
             "HF_XET_HIGH_PERFORMANCE": "1",
+            "SWARM_APP": os.environ.get("SWARM_APP", "swarm-vllm"),
             "SWARM_MODEL": MODEL_NAME,
             "SWARM_MODEL_REVISION": MODEL_REVISION,
         }
@@ -35,7 +38,7 @@ image = (
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
 vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
 
-app = modal.App("swarm-vllm")
+app = modal.App(os.environ.get("SWARM_APP", "swarm-vllm"))
 
 
 @app.function(
