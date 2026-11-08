@@ -115,6 +115,7 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     calls = [e for e in events if e["type"] == "model_call"]
     requests = requests_to_holder(events)
     probes = {e["agent"]: e.get("verdict", "?") for e in events if e["type"] == "probe"}
+    reasoning = [len(c.get("reasoning") or "") for c in calls]
     return {
         "lb": cfg["lb"],
         "seed": cfg["seed"],
@@ -135,8 +136,21 @@ def summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "prompt_tokens": sum(c.get("prompt_tokens", 0) for c in calls),
         "completion_tokens": sum(c.get("completion_tokens", 0) for c in calls),
         "wall_seconds": events[-1].get("wall_seconds"),
+        "thinking": bool((cfg.get("model_params") or {}).get("thinking")),
+        "mean_reasoning_chars": round(sum(reasoning) / len(reasoning)) if reasoning else 0,
+        "idle_round_ends": sum(e["type"] == "idle_end" for e in events),
+        "model_errors": sum(e["type"] == "model_error" for e in events),
+        "reply_text_posted": len(reply_text_posted(events)),
         "probe_verdicts": probes,
     }
+
+
+def reply_text_posted(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Board posts that came from an agent's plain reply text rather than post_message.
+
+    Before reply text was made private these were auto-posted; after, there should be none.
+    """
+    return [e for e in events if e["type"] == "post" and e.get("via") == "content"]
 
 
 def main() -> None:

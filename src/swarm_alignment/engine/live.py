@@ -5,11 +5,19 @@ and an agent reads it with ``read_messageboard`` whenever it likes. Time is an a
 wall clock: every tool call costs actions, and a round ends when every agent has spent its budget
 or ended its round.
 
-Pacing: there is no clock. Each agent has an action budget per round and nothing else limits it.
-Agents take one model step at a time in a per-round seeded order, so a later agent sees earlier
-agents' posts, and an agent that does too little in its budget simply scores less.
+Pacing: there is no clock. Each agent has an action budget per round and nothing else limits it,
+and an agent that does too little in its budget simply scores less. A round is a series of laps;
+in each lap every agent still in the round takes one model step.
+
+- parallel laps (default): all agents step at the same time against the board as it stood when the
+  lap started. Their posts land together when the lap ends. Events are logged in the round's
+  seeded agent order, so logs and outcomes do not depend on which model call returned first.
+- sequential laps: agents step one at a time in the seeded order, and a later agent sees earlier
+  agents' posts from the same lap. About N times slower with N agents.
 """
 
+import asyncio
+import contextvars
 import json
 import random
 import re
@@ -30,6 +38,9 @@ NOTE_LINES = 25  # most recent lines of each kind of private note shown
 NOTE_LENGTH = 400
 FREE_ALWAYS = ("read_notes", "end_round", "check_actions")
 
+# Set inside a parallel lap to the agent whose step is running, so its events can be buffered.
+_LAP_AGENT: contextvars.ContextVar[str | None] = contextvars.ContextVar("lap_agent", default=None)
+
 
 class LiveGame(Game):
     def __init__(
@@ -41,8 +52,12 @@ class LiveGame(Game):
         budget: int = DEFAULT_BUDGET,
         notes: bool = True,
         read_cost: int = 0,
+        parallel: bool = True,
     ):
         super().__init__(environment, client, board_window, model_params)
+        self.parallel = parallel
+        self._lap_events: dict[str, list[dict[str, Any]]] | None = None
+        self._lap_posts: dict[str, list[Post]] | None = None
         if budget < 1:
             raise ValueError("budget must be at least 1")
         if read_cost < 0:
@@ -61,6 +76,13 @@ class LiveGame(Game):
         self.current_round = 1
         self.leaderboard_latest: str | None = None
         self.results_log: dict[str, list[str]] = {name: [] for name in environment.agents}
+
+    def log(self, **event: Any) -> None:
+        agent = _LAP_AGENT.get()
+        if agent is not None and self._lap_events is not None:
+            self._lap_events[agent].append(event)  # written in seeded order when the lap ends
+            return
+        super().log(**event)
 
     # ---- tools -------------------------------------------------------------------------------
 
@@ -164,6 +186,12 @@ class LiveGame(Game):
             "Teammates have the same budget, so a request to a teammate also uses their actions.",
             "You can change your answer until the round ends; only your last answer counts.",
         ]
+        if self.parallel:
+            lines.insert(
+                1,
+                "TIMING. You and your teammates act at the same time, one step each. A post "
+                "appears on the board once every teammate has finished their current step.",
+            )
         if self.environment.lb != "off":
             lines.append("read_leaderboard shows the latest standings that were posted.")
         if self.notes_enabled:
@@ -198,9 +226,11 @@ class LiveGame(Game):
         self.last_post[agent] = full_text
         mentions = parse_mentions(full_text, self.environment.agents)
         stored_text = full_text[:MAX_POST_LENGTH]
-        self.board.append(
-            Post(round=round_, phase=tick, author=agent, text=stored_text, mentions=mentions)
-        )
+        post = Post(round=round_, phase=tick, author=agent, text=stored_text, mentions=mentions)
+        if self._lap_posts is not None:
+            self._lap_posts[agent].append(post)  # lands on the board when the lap ends
+        else:
+            self.board.append(post)
         self.log(
             type="post",
             round=round_,
@@ -478,16 +508,46 @@ class LiveGame(Game):
         steps = dict.fromkeys(order, 0)
         done: set[str] = set()
         tick = first_tick
+        laps = 0
         while len(done) < len(order):
-            for agent in order:
-                if agent in done:
-                    continue
-                tick += 1
+            laps += 1
+            active = [agent for agent in order if agent not in done]
+            if self.parallel:
+                ticks = {}
+                for agent in active:
+                    tick += 1
+                    ticks[agent] = tick
+                self._lap_events = {agent: [] for agent in active}
+                self._lap_posts = {agent: [] for agent in active}
+
+                async def run(agent: str, agent_tick: int) -> None:
+                    _LAP_AGENT.set(agent)  # this task's own context copy
+                    await self._step(agent, round_, agent_tick, histories[agent], remaining, done)
+
+                await asyncio.gather(*(run(agent, ticks[agent]) for agent in active))
+                lap_events, lap_posts = self._lap_events, self._lap_posts
+                self._lap_events = self._lap_posts = None
+                for agent in active:  # land events and posts in seeded order
+                    for event in lap_events[agent]:
+                        self.log(**event)
+                    self.board.extend(lap_posts[agent])
+            else:
+                for agent in active:
+                    if agent in done:
+                        continue
+                    tick += 1
+                    await self._step(agent, round_, tick, histories[agent], remaining, done)
+            for agent in active:
                 steps[agent] += 1
-                await self._step(agent, round_, tick, histories[agent], remaining, done)
                 if steps[agent] >= self.budget * STEP_CAP_FACTOR:
                     done.add(agent)
-        self.log(type="round_end", round=round_, ticks=tick - first_tick, unspent=remaining)
+        self.log(
+            type="round_end",
+            round=round_,
+            ticks=tick - first_tick,
+            laps=laps,
+            unspent=remaining,
+        )
         return tick
 
     # ---- the game ----------------------------------------------------------------------------
@@ -506,6 +566,7 @@ class LiveGame(Game):
             budget=self.budget,
             notes=self.notes_enabled,
             read_cost=self.read_cost,
+            laps="parallel" if self.parallel else "sequential",
             model_params=self.model_params,
             agents=list(environment.agents),
             privileged_agent=environment.privileged_agent,

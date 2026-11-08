@@ -60,7 +60,7 @@ def test_live_game_requires_a_live_environment():
         LiveGame(Discovery(seed=1, lb="off"), ScriptClient(lambda *a: []))
 
 
-def test_board_is_live_within_a_round():
+def test_sequential_laps_show_earlier_posts_within_a_lap():
     env = live_env()
 
     def fn(agent, round_, step, messages, tools):
@@ -68,7 +68,7 @@ def test_board_is_live_within_a_round():
             return [call("post_message", text=f"hello from {agent}"), call("read_messageboard")]
         return []
 
-    events = play(env, fn, budget=4)
+    events = play(env, fn, budget=4, parallel=False)
     order = [e["agent"] for e in events if e["type"] == "model_call"][: len(env.agents)]
     assert sorted(order) == sorted(env.agents)
     for position, agent in enumerate(order):
@@ -477,3 +477,65 @@ def test_live_prompt_says_only_post_message_reaches_the_board():
     assert "plain reply text, is posted" not in prompt
     phased = Discovery(seed=3, lb="off")
     assert "plain reply text, is posted" in phased.system_prompt(phased.agents[0])
+
+
+def test_parallel_laps_land_posts_at_the_end_of_the_lap():
+    env = live_env()
+
+    def fn(agent, round_, step, messages, tools):
+        if step == 0:
+            return [call("post_message", text=f"hello from {agent}"), call("read_messageboard")]
+        if step == 1:
+            return [call("read_messageboard")]
+        return []
+
+    events = play(env, fn, budget=4)
+    for agent in env.agents:
+        first, second = [
+            e["result"] for e in tool_events(events, agent=agent, tool="read_messageboard")
+        ]
+        assert "hello from" not in first  # nobody's post, not even its own, is visible mid-lap
+        assert second.count("hello from") == len(env.agents)
+    assert events[0]["laps"] == "parallel"
+    assert "TIMING." in LiveGame(env, ScriptClient(lambda *a: []))._rules_text()
+    assert "TIMING." not in LiveGame(env, ScriptClient(lambda *a: []), parallel=False)._rules_text()
+
+
+def test_parallel_laps_are_deterministic_when_calls_finish_in_random_order():
+    import random as stdlib_random
+
+    def fn(agent, round_, step, messages, tools):
+        if step < 3:
+            return [
+                call("post_message", text=f"{agent} {round_} {step}"),
+                call("read_messageboard"),
+            ]
+        return []
+
+    class JitterClient(ScriptClient):
+        def __init__(self, fn, seed):
+            super().__init__(fn)
+            self.rng = stdlib_random.Random(seed)
+
+        async def complete(self, messages, tools, seed):
+            await asyncio.sleep(self.rng.random() / 200)
+            return await super().complete(messages, tools, seed)
+
+    runs = [
+        asyncio.run(LiveGame(live_env(rounds=2), JitterClient(fn, jitter)).play())
+        for jitter in (1, 2, 3)
+    ]
+    assert runs[0] == runs[1] == runs[2]
+
+
+def test_events_stream_to_the_sink_as_they_happen():
+    import io
+
+    env = live_env()
+    game = LiveGame(
+        env, ScriptClient(lambda a, r, step, m, t: [call("check_actions")] if step < 2 else [])
+    )
+    game.sink = io.StringIO()
+    events = asyncio.run(game.play())
+    streamed = [json.loads(line) for line in game.sink.getvalue().splitlines()]
+    assert streamed == events

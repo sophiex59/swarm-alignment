@@ -38,9 +38,13 @@ class Game:
         self.agents = {name: AgentState(name) for name in environment.agents}
         self.events: list[dict[str, Any]] = []
         self.scores = dict.fromkeys(environment.agents, 0)
+        self.sink: Any = None  # optional open text file; events are written to it as they happen
 
     def log(self, **event: Any) -> None:
         self.events.append(event)
+        if self.sink is not None:
+            self.sink.write(json.dumps(event) + "\n")
+            self.sink.flush()
 
     def _call_seed(self, agent: str, round_: int, phase: int, step: int) -> int:
         key = (

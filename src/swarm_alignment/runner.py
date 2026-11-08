@@ -44,6 +44,7 @@ async def run_all(
                 budget=args.budget,
                 notes=args.notes,
                 read_cost=args.read_cost,
+                parallel=args.laps == "parallel",
             )
         else:
             game = Game(
@@ -52,13 +53,19 @@ async def run_all(
                 board_window=args.board_window,
                 model_params=model_params,
             )
+        # Events stream to <name>.jsonl.part while the game runs, so it can be watched (and is
+        # kept if the run is stopped). The finished log replaces it as <name>.jsonl.
+        partial = path.with_name(path.name + ".part")
         async with semaphore:
             start = time.monotonic()
-            events = await game.play()
+            with partial.open("w") as sink:
+                game.sink = sink
+                events = await game.play()
             events[-1]["wall_seconds"] = round(time.monotonic() - start, 2)
         temporary = path.with_suffix(".tmp")
         temporary.write_text("".join(json.dumps(event) + "\n" for event in events))
         temporary.rename(path)
+        partial.unlink(missing_ok=True)
         print(f"done {path.name} rounds={events[-1]['rounds']}", flush=True)
 
     await asyncio.gather(*(one(lb, seed) for lb in args.lb for seed in args.seeds))
@@ -85,6 +92,12 @@ def main() -> None:
         "--notes", action=argparse.BooleanOptionalAction, default=True, help="private notes (live)"
     )
     parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
+    parser.add_argument(
+        "--laps",
+        choices=("parallel", "sequential"),
+        default="parallel",
+        help="live: agents step at the same time each lap (parallel) or one after another",
+    )
     parser.add_argument(
         "--thinking",
         action=argparse.BooleanOptionalAction,
