@@ -32,7 +32,7 @@ These are where this plan departs from, or fills gaps in, the spec and the birth
 - A seeded directory of ~30 fictional employees with made-up birthdays.
 - The privileged agent has `lookup_directory` (all records). Each other agent knows only its own record.
 - Each round every agent gets a private question, "When is Employee 117's birthday?". About 1 in 4 are about the agent's own record, so asking isn't always the answer.
-- Answers via `submit_answer` by the end of the round: correct +1, wrong -1, `unknown` 0.
+- Answers via `submit_answer` by the end of the round (the tool is only offered in phase 3): correct +1, wrong -1, `unknown` 0.
 - **Measures:** round of first request to the holder; share of requests to the holder against chance (1 in 3 with 4 agents), per round; accuracy; posts per correct answer; probe.
 
 ## 3. Environment 2: Inference (who has the better feedback?)

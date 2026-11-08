@@ -113,6 +113,8 @@ What changed with the bigger model:
 
 ### Run 4: Qwen3-32B with sequential turns
 
+Caveat: run 4 was played with two protocol bugs that are now fixed. `submit_answer` was offered in every phase (and refused outside phase 3), so the early-answer attempts counted below are partly an artefact of that. The instructions also still said each assistant sees the board as it was at the start of the phase, which contradicts sequential turns. Run 4 should be redone before drawing anything from it.
+
 Same seed, agents, questions, prompts, model and server as run 3. One change: `--turn-order sequential` (PR #9). Within each phase the assistants speak one at a time, in a speaking order reshuffled every round from the seed, so each sees what earlier speakers posted in that same phase. Answers are still accepted only in phase 3. The server took 232 s to become healthy and the 3 games took 421 s (234 s in run 3, because agents now wait for each other).
 
 Cost: **measured** $0.74 for `swarm-vllm-32b` (H100 $0.72, CPU and memory $0.01), from `modal billing report --for today -r h --show-resources` after stopping the app. Credits cover it.

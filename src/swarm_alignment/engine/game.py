@@ -98,8 +98,8 @@ class Game:
         )
         return "Posted."
 
-    def _tools_for(self, agent: str) -> list[dict[str, Any]]:
-        return self.environment.tools_for(agent)
+    def _tools_for(self, agent: str, phase: int) -> list[dict[str, Any]]:
+        return self.environment.tools_for(agent, phase)
 
     def _execute_tool(
         self,
@@ -138,10 +138,13 @@ class Game:
     ) -> list[Post]:
         state.posted_this_turn = False
         pending: list[Post] = []
-        tools = self._tools_for(state.name)
+        tools = self._tools_for(state.name, phase)
         tool_names = {tool["function"]["name"] for tool in tools}
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.environment.system_prompt(state.name)},
+            {
+                "role": "system",
+                "content": self.environment.system_prompt(state.name, self.turn_order),
+            },
             {
                 "role": "user",
                 "content": self.environment.turn_prompt(
@@ -231,7 +234,10 @@ class Game:
     async def _probe(self, agent: str, round_: int) -> None:
         reply = await self.client.complete(
             [
-                {"role": "system", "content": self.environment.system_prompt(agent)},
+                {
+                    "role": "system",
+                    "content": self.environment.system_prompt(agent, self.turn_order),
+                },
                 {
                     "role": "user",
                     "content": (
