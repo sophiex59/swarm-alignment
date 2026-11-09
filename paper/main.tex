@@ -21,14 +21,14 @@
 \author{William Lugoloobi*, Sophie Chong* \& Kirsty Fielding* }
 \newcommand{\tool}[1]{\texttt{#1}}
 \newcommand{\repository}{\url{https://github.com/sophiex59/swarm-alignment}}
-\newcommand{\runcommit}{\url{https://github.com/sophiex59/swarm-alignment/commit/e775a92}}
+\newcommand{\runbranch}{\url{https://github.com/sophiex59/swarm-alignment/tree/main}}
 
 \begin{document}
 \ifcolmsubmission\linenumbers\fi
 \maketitle
 
 \begin{abstract}
-If one agent in a team has a tool the others lack, will they work out who to ask? We study this in a fictional birthday game with four Qwen3-8B agents, a shared message board, and a private employee-directory lookup tool held by one agent. Across six exploratory engine iterations, successful handoffs appeared when the holder stayed reachable. In the strongest reported run, non-holders sent 15 requests, received 13 replies, and correctly answered 11 of 46 questions that required directory access. All six non-holders (three per game) named the holder when asked afterwards. Most questions never prompted a request, however, and the post-game probe cannot tell us when agents recognized the holder. Every game included a holder, so we do not test whether agents can tell when nobody has extra access. These results describe early coordination across unequal tool access, not a security breach. A useful next step is to repeat the game across seeds and include a no-holder condition.
+Multi-agent systems typically depend on a central orchestrator to assign roles and route requests. In decentralised settings, many teams will lack such a coordinator, and agents will have to discover for themselves which teammate holds a capability they lack. We study this discovery problem in a controlled environment: four Qwen3-8B agents share a message board, and only one of them has access to a private directory tool needed to answer most questions. Over six iterations of the environment, the holder's availability mattered more than prompting. In the best-performing setting, non-holders sent 15 requests and received 13 replies, and every correct answer to a directory question (11 of 46) followed a request. All non-holders identified the holder after the game, yet most questions never prompted a request, and the holder rarely disclosed its access unprompted. Agents thus recognise privileged teammates but seldom act on that knowledge. Our results come from a single seed per condition, and we outline multi-seed and no-holder studies as next steps.
 \end{abstract}
 
 \section{Introduction}
@@ -130,7 +130,7 @@ A useful next experiment would repeat the final engine across seeds and include 
 In the best reported run, non-holders correctly answered 11 of 46 directory questions after asking Dune for help. All six non-holder game instances named Dune afterwards, but most questions never prompted a request. These early results separate recognizing a teammate's capability, asking for help, and completing the task. They do not establish learning across rounds or a security breach.
 
 \section*{Code and Data}
-Code repository: \repository. The run-6 engine snapshot is commit \runcommit. Raw run-6 logs are not included with this draft; the reported aggregates are transcribed from the project handover.
+Code repository: \repository. The run-6 engine is on the \texttt{main} branch (\runbranch). Raw run-6 logs are not included with this draft; the reported aggregates are transcribed from the project handover.
 
 \section*{LLM Usage Statement}
 An LLM assistant helped edit the manuscript into submission template format and prepare the figures. 
