@@ -13,28 +13,41 @@ from openai import AuthenticationError
 
 from swarm_alignment.client import OpenAIChatClient
 from swarm_alignment.engine.game import TURN_ORDERS, Game
+from swarm_alignment.engine.live import (
+    DEFAULT_LAPS,
+    DEFAULT_MAX_CALLS,
+    DEFAULT_MAX_MODEL_CALLS,
+    DEFAULT_ROUND_SECONDS,
+    LiveGame,
+)
 from swarm_alignment.run import parse_seeds, wait_for_health
 
 
 def format_event(event: dict[str, Any]) -> str | None:
     """Render a concise, human-readable line for live and sidecar logs."""
     kind = event.get("type")
+    round_ = event.get("round")
+    round_label = f"R{round_:02d}" if isinstance(round_, int) else "R?"
+    phase = f".P{event['phase']}" if event.get("phase") is not None else ""
     if kind == "config":
+        agents = event.get("agents") or []
         return (
-            f"START seed={event['seed']} leaderboard={event['lb']} "
-            f"agents={', '.join(event['agents'])} rounds={event['rounds']} "
-            f"turn_order={event['turn_order']}"
+            f"START seed={event.get('seed', '?')} leaderboard={event.get('lb', '?')} "
+            f"agents={', '.join(agents)} rounds={event.get('rounds', '?')} "
+            f"turn_order={event.get('turn_order', 'n/a')}"
         )
     if kind == "turn_order":
-        return f"R{event['round']:02d} order: {' → '.join(event['order'])}"
+        return f"{round_label} order: {' → '.join(event.get('order') or [])}"
     if kind == "model_call":
         calls = event.get("tool_calls") or []
         if not calls:
             return None
         activity = ", ".join(call.get("name", "tool") for call in calls)
+        step = event.get("step")
+        step_label = f" step {step + 1}" if isinstance(step, int) else ""
         return (
-            f"R{event['round']:02d}.P{event['phase']} {event['agent']} "
-            f"step {event['step'] + 1}: {activity} "
+            f"{round_label}{phase} {event.get('agent', '?')}"
+            f"{step_label}: {activity} "
             f"({event.get('prompt_tokens', 0)} in / "
             f"{event.get('completion_tokens', 0)} out tokens)"
         )
@@ -44,31 +57,30 @@ def format_event(event: dict[str, Any]) -> str | None:
         text = " ".join(event.get("text", "").split())
         if len(text) > 220:
             text = text[:217] + "..."
-        return f"R{event['round']:02d}{phase} {author}: {text}"
+        return f"{round_label}{phase} {author}: {text}"
     if kind == "tool" and event.get("tool") == "lookup_directory":
-        employee_id = event.get("args", {}).get("employee_id", "?")
+        employee_id = (event.get("args") or {}).get("employee_id", "?")
         return (
-            f"R{event['round']:02d}.P{event['phase']} {event['agent']} "
-            f"looked up {employee_id}: {event['result']}"
+            f"{round_label}{phase} {event.get('agent', '?')} "
+            f"looked up {employee_id}: {event.get('result', '')}"
         )
     if kind == "invalid_tool":
         return (
-            f"R{event['round']:02d}.P{event['phase']} {event['agent']} "
-            f"invalid tool: {event['tool']}"
+            f"{round_label}{phase} {event.get('agent', '?')} invalid tool: {event.get('tool', '?')}"
         )
     if kind == "answer":
         return (
-            f"R{event['round']:02d} answer: {event['agent']} submitted "
-            f"{event['answer']} for {event['question_id']}"
+            f"{round_label} answer: {event.get('agent', '?')} submitted "
+            f"{event.get('answer', '?')} for {event.get('question_id', '?')}"
         )
     if kind == "round_score":
         entries = []
-        for agent, detail in event["per_agent"].items():
+        for agent, detail in (event.get("per_agent") or {}).items():
             points = detail["points"]
             entries.append(f"{agent} {points:+d} ({detail['outcome']})")
         return (
-            f"R{event['round']:02d} score: {' | '.join(entries)} "
-            f"| team total {event['team_total']:+d}"
+            f"{round_label} score: {' | '.join(entries)} "
+            f"| team total {event.get('team_total', 0):+d}"
         )
     if kind == "probe":
         names = ", ".join(event.get("suspected_teammates", [])) or "none"
@@ -78,15 +90,19 @@ def format_event(event: dict[str, Any]) -> str | None:
         if len(evidence) > 220:
             evidence = evidence[:217] + "..."
         suffix = f" — {evidence}" if evidence else ""
-        return f"PROBE {event['agent']}: suspects {names}{confidence_text}{suffix}"
+        return f"PROBE {event.get('agent', '?')}: suspects {names}{confidence_text}{suffix}"
     if kind == "end":
-        return f"END team total {event['team_total']:+d} · {event['wall_seconds']:.1f}s"
+        wall_seconds = event.get("wall_seconds")
+        duration = f" · {wall_seconds:.1f}s" if isinstance(wall_seconds, (int, float)) else ""
+        return f"END team total {event.get('team_total', 0):+d}{duration}"
     return None
 
 
-def make_environment(env: str, seed: int, lb: str, n_agents: int, rounds: int) -> Any:
+def make_environment(
+    env: str, seed: int, lb: str, n_agents: int, rounds: int, mode: str = "phased"
+) -> Any:
     module = importlib.import_module(f"swarm_alignment.envs.{env}")
-    return module.make_environment(seed, lb, n_agents, rounds)
+    return module.make_environment(seed, lb, n_agents, rounds, mode)
 
 
 async def run_all(
@@ -117,7 +133,9 @@ async def run_all(
                 flush=True,
             )
             return
-        environment = make_environment(args.env, seed, lb, args.n_agents, args.rounds)
+        environment = make_environment(
+            args.env, seed, lb, args.n_agents, args.rounds, mode=args.mode
+        )
         temporary = path.with_suffix(path.suffix + ".tmp")
         readable_temporary = readable_path.with_suffix(readable_path.suffix + ".tmp")
 
@@ -135,15 +153,34 @@ async def run_all(
                     if summary is not None:
                         print(f"[{path.stem}] {summary}", flush=True)
 
-            async with semaphore:
-                events = await Game(
+            if args.mode == "live":
+                game: Game = LiveGame(
+                    environment,
+                    client,
+                    board_window=args.board_window,
+                    model_params=model_params,
+                    budget=args.budget,
+                    notes=args.notes,
+                    read_cost=args.read_cost,
+                    parallel=args.turn_order == "parallel",
+                    laps=args.laps,
+                    max_calls=args.max_calls,
+                    asynchronous=args.turn_order == "async",
+                    round_seconds=args.round_seconds,
+                    max_model_calls=args.max_model_calls,
+                    event_sink=record_event,
+                )
+            else:
+                game = Game(
                     environment,
                     client,
                     board_window=args.board_window,
                     model_params=model_params,
                     turn_order=args.turn_order,
                     event_sink=record_event,
-                ).play()
+                )
+            async with semaphore:
+                events = await game.play()
         readable_temporary.rename(readable_path)
         temporary.rename(path)
         print(
@@ -162,7 +199,60 @@ def main() -> None:
     parser.add_argument("--n-agents", type=int, default=4)
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--board-window", type=int, default=5)
-    parser.add_argument("--turn-order", choices=TURN_ORDERS, default="sequential")
+    parser.add_argument(
+        "--mode",
+        choices=("live", "phased"),
+        default="live",
+        help="live: read the board any time, rounds measured in laps. phased: 3 fixed phases.",
+    )
+    parser.add_argument(
+        "--laps", type=int, default=DEFAULT_LAPS, help="live: laps per round (one step each)"
+    )
+    parser.add_argument(
+        "--max-calls", type=int, default=DEFAULT_MAX_CALLS, help="live: tool calls per step"
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help="live: optional actions per round; off by default (tool calls are free)",
+    )
+    parser.add_argument(
+        "--notes", action=argparse.BooleanOptionalAction, default=True, help="private notes (live)"
+    )
+    parser.add_argument("--read-cost", type=int, default=0, help="actions per board read (live)")
+    parser.add_argument(
+        "--turn-order",
+        choices=(*TURN_ORDERS, "parallel", "async"),
+        default="sequential",
+        help="live: laps with agents one after another (default) or all at once each lap; "
+        "simultaneous: phased snapshots; async: every agent runs its own loop at the same time, "
+        "capped by --round-seconds",
+    )
+    parser.add_argument(
+        "--round-seconds",
+        type=float,
+        default=DEFAULT_ROUND_SECONDS,
+        help="async: wall-clock seconds per agent per round",
+    )
+    parser.add_argument(
+        "--max-model-calls",
+        type=int,
+        default=DEFAULT_MAX_MODEL_CALLS,
+        help="async: model calls per agent per round",
+    )
+    parser.add_argument(
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Qwen3 thinking mode; reasoning is logged privately, never posted",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="max tokens per model reply (thinking included); prompt + this must fit in 16k",
+    )
     parser.add_argument("--base-url", default=os.environ.get("SWARM_BASE_URL"))
     parser.add_argument("--api-key-env", default="VLLM_API_KEY")
     parser.add_argument("--model", default="llm")
@@ -186,21 +276,45 @@ def main() -> None:
         parser.error("--rounds must be at most 10")
     if args.board_window < 1:
         parser.error("--board-window must be at least 1")
+    if args.mode == "phased" and args.turn_order in ("parallel", "async"):
+        parser.error("--turn-order parallel and async require --mode live")
+    if args.mode == "live" and args.turn_order == "simultaneous":
+        parser.error("--turn-order simultaneous requires --mode phased")
+    if args.budget is not None and args.budget < 1:
+        parser.error("--budget must be at least 1")
+    if args.turn_order == "async" and args.budget is not None:
+        parser.error("--turn-order async cannot be combined with --budget")
+    if args.round_seconds <= 0 or args.max_model_calls < 1:
+        parser.error("--round-seconds and --max-model-calls must be positive")
+    if args.laps < 1:
+        parser.error("--laps must be at least 1")
+    if args.max_calls < 1:
+        parser.error("--max-calls must be at least 1")
+    if args.read_cost < 0:
+        parser.error("--read-cost must be at least 0")
 
+    if args.thinking is None:
+        args.thinking = args.mode == "live"
     args.out.mkdir(parents=True, exist_ok=True)
     waited = wait_for_health(args.base_url)
     print(f"server healthy after {waited:.0f}s", flush=True)
+    max_tokens = args.max_tokens
+    if max_tokens is None:
+        max_tokens = 3072 if args.thinking else 512
     client = OpenAIChatClient(
         base_url=args.base_url.rstrip("/") + "/v1",
         api_key=api_key,
         model=args.model,
         temperature=args.temperature,
-        enable_thinking=False,
+        max_tokens=max_tokens,
+        enable_thinking=args.thinking,
     )
     model_params = {
         "model": args.model,
         "temperature": args.temperature,
-        "enable_thinking": False,
+        "max_tokens": max_tokens,
+        "enable_thinking": args.thinking,
+        "mode": args.mode,
     }
 
     async def run_after_auth_check() -> None:

@@ -23,20 +23,28 @@ Deployment prints the endpoint URL. If the `swarm-vllm` secret already exists, u
 Put `SWARM_BASE_URL` and `VLLM_API_KEY` in the repo's `.env` file. Run through uv's env-file option; `source .env` is not required:
 
 ```bash
+uv run python -m swarm_alignment.runner --mode live --turn-order async --round-seconds 300 --rounds 10 --lb off on --seeds 0 --out results/my-run
+```
+
+Live mode is the default. Its default thinking setting is on; `--no-thinking` disables it. To replay the phased Discovery setup, pass `--mode phased`:
+
+```bash
 uv run --env-file .env python -m swarm_alignment.runner \
   --env discovery \
+  --mode phased \
   --lb on \
   --seeds 0 \
   --n-agents 4 \
   --rounds 5 \
   --board-window 5 \
+  --turn-order sequential \
   --out results/discovery-smoke \
   --live
 ```
 
 The runner waits for the server, checks the key against `/v1/models`, then starts games. `--lb` accepts `off`, `on`, or `team`; pass multiple values to compare conditions. Discovery supports 2–8 agents and 1–10 rounds. Each completed game writes a machine-readable `.jsonl` event log and a readable `.log` summary in the output directory. Live mode prints those summaries as events happen.
 
-Qwen3 thinking is disabled for model calls. This keeps reasoning out of public board messages; historical runs in [results.md](results.md) also used thinking off.
+Thinking defaults to on for live runs and off for phased runs. Use `--thinking` or `--no-thinking` to override the mode default. `--max-tokens` defaults to 3072 with thinking on and 512 with thinking off. Reasoning is kept private and is not posted to the board.
 
 Use a separate output directory when changing run settings. Existing game logs are skipped by filename, even if the settings differ; resume checks are not yet tied to a run manifest.
 

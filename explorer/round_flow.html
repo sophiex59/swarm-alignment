@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discovery Round Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one round as a lap-by-lap log on the left, the public board and action budgets on the right. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #18212b;
+  --muted: #5a6776;
+  --line: #d9dfe6;
+  --board: #fffaf0;
+  --board-line: #eadfc6;
+  --private: #eef1f5;
+  --accent: #2b5fa8;
+  --holder: #c4691d;
+  --gale: #c24848;
+  --heath: #3567b5;
+  --birch: #3c8a48;
+  --good: #2f7d43;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171d; --surface: #1a2129; --ink: #e6ebf1; --muted: #9aa7b5; --line: #2c3743;
+    --board: #221f17; --board-line: #3d3626; --private: #202831; --accent: #7aa7e8;
+    --holder: #e79345; --gale: #e07474; --heath: #7ea3e6; --birch: #6fbe7b; --good: #6fbe7b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171d; --surface: #1a2129; --ink: #e6ebf1; --muted: #9aa7b5; --line: #2c3743;
+  --board: #221f17; --board-line: #3d3626; --private: #202831; --accent: #7aa7e8;
+  --holder: #e79345; --gale: #e07474; --heath: #7ea3e6; --birch: #6fbe7b; --good: #6fbe7b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+  display: grid; gap: 22px;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: clamp(1.7rem, 3.2vw, 2.3rem); line-height: 1.1; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 68ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 0.85em; }
+
+/* Agents */
+.agents { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.agent { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 6px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.agent .name { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.agent .name strong { font-family: var(--font-display); font-size: 1.1rem; color: var(--c); }
+.tag { font-family: var(--font-mono); font-size: 0.7rem; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.holder { border-color: var(--holder); color: var(--holder); }
+.agent .q { font-size: 0.86rem; color: var(--muted); }
+.agent .q b { color: var(--ink); font-weight: 500; }
+.meter { display: grid; gap: 3px; }
+.meter .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter .fill { height: 100%; background: var(--c); width: 100%; transition: width 0.25s ease; }
+.meter .lbl { font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+button { font: inherit; font-size: 0.9rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 6px 14px; border-radius: 5px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+button:disabled { opacity: 0.45; cursor: default; }
+.where { font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Main columns */
+.main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.log { display: grid; gap: 10px; min-width: 0; }
+.lap-head { font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-top: 6px; border-top: 1px solid var(--line); }
+.step { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; cursor: pointer; transition: opacity 0.2s ease; min-width: 0; }
+.step.future { opacity: 0.38; }
+.step.current { box-shadow: 0 0 0 2px var(--accent); }
+.step .who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.step .who strong { color: var(--c); font-family: var(--font-display); font-size: 1rem; }
+.step .who span { font-size: 0.8rem; color: var(--muted); }
+.think { background: var(--private); border: 1px dashed var(--line); border-radius: 5px; padding: 6px 9px; font-size: 0.86rem; font-style: italic; color: var(--muted); }
+.think::before { content: "private thinking · "; font-style: normal; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.calls { display: grid; gap: 4px; }
+.call { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; font-family: var(--font-mono); font-size: 0.8rem; align-items: baseline; }
+.call .fn { color: var(--ink); overflow-wrap: anywhere; }
+.call .cost { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.call .cost.free { color: var(--good); }
+.call .res { grid-column: 1 / -1; color: var(--muted); padding-left: 14px; overflow-wrap: anywhere; }
+.call .res::before { content: "→ "; }
+.call.public .fn::after { content: "  public"; color: var(--accent); font-size: 0.72rem; }
+
+/* Board */
+.side { display: grid; gap: 16px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); min-width: 0; }
+.board { background: var(--board); border: 1px solid var(--board-line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 10px; min-height: 220px; align-content: start; }
+.board-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.post { border-top: 1px solid var(--board-line); padding-top: 8px; display: grid; gap: 2px; animation: land 0.3s ease; }
+.post:first-of-type { border-top: none; padding-top: 0; }
+.post .meta { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); }
+.post .meta b { color: var(--c); font-weight: 500; }
+.post .txt { font-size: 0.9rem; overflow-wrap: anywhere; }
+.post.lb .txt { font-family: var(--font-mono); font-size: 0.8rem; }
+.empty { color: var(--muted); font-size: 0.86rem; font-style: italic; }
+@keyframes land { from { transform: translateY(-4px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+
+.note { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 6px; font-size: 0.88rem; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+/* End of round */
+.end { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 8px; min-width: 0; align-content: start; }
+table { border-collapse: collapse; width: 100%; font-size: 0.84rem; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th { font-weight: 500; color: var(--muted); font-size: 0.76rem; }
+td.ok { color: var(--good); font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.sw.priv { background: var(--private); border: 1px dashed var(--muted); }
+.sw.pub { background: var(--board); border: 1px solid var(--board-line); }
+.foot { font-size: 0.82rem; color: var(--muted); max-width: 80ch; }
+
+/* Glance diagram */
+.glance { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.diagram-scroll { overflow-x: auto; }
+#diagram { display: block; width: 100%; min-width: 860px; height: auto; font-family: var(--font-mono); }
+.chip-sw { width: 18px; height: 11px; border-radius: 3px; display: inline-block; }
+.chip-sw.cost { background: var(--private); border: 1.5px solid var(--ink); }
+.chip-sw.free { background: transparent; border: 1.5px dashed var(--muted); }
+.chip-sw.pub { background: var(--board); border: 1.5px solid var(--accent); }
+
+@media (max-width: 860px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; }
+  .agents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .end { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header style="display:grid;gap:8px">
+    <div class="eyebrow">Discovery environment · live mode · one round</div>
+    <h1>How a round should flow</h1>
+    <p class="lede">An illustrative round 4 of 10 with the leaderboard on, written the way we want discovery to work: non-holders ask, the holder looks things up and posts answers, everyone submits. It uses the engine's real tools, costs and privacy rules. Step through it to see what each agent does, what stays private, what reaches the board, and what each action costs.</p>
+    <div class="legend">
+      <span><i class="sw priv"></i>Private: thinking, reply text, tool results, notes</span>
+      <span><i class="sw pub"></i>Public: only what goes through post_message, plus the leaderboard</span>
+    </div>
+  </header>
+
+  <section class="glance" aria-labelledby="glance-h">
+    <div style="display:grid;gap:4px">
+      <h2 id="glance-h">The round at a glance</h2>
+      <p class="foot">Each row is one agent's lane, with the public message board at the bottom. Columns are laps; in every lap each agent still in the round takes one step. Arrows show messages going onto the board and being read back off it.</p>
+    </div>
+    <div class="diagram-scroll"><svg id="diagram" role="img" aria-labelledby="diagram-title" xmlns="http://www.w3.org/2000/svg"><title id="diagram-title">Swimlane diagram of one Discovery round: Heath and Gale post requests to Dune in lap 1, Dune looks both up and posts the answers in lap 2, Gale and Heath read them and submit, then the round is scored.</title></svg></div>
+    <div class="legend">
+      <span><i class="chip-sw cost"></i>costs 1 action</span>
+      <span><i class="chip-sw free"></i>free</span>
+      <span><i class="chip-sw pub"></i>public post</span>
+      <span><svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--accent)" stroke-width="1.6"/></svg>message goes onto the board</span>
+      <span><svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="4 3"/></svg>agent reads it</span>
+      <span>Every step begins with private thinking, not drawn.</span>
+    </div>
+  </section>
+
+  <section style="display:grid;gap:10px" aria-labelledby="setup">
+    <h2 id="setup">Start of round: what each agent is handed, privately</h2>
+    <div class="agents" id="agents"></div>
+    <p class="foot">Each agent also starts with its results from earlier rounds, its private notes, and how many board posts it hasn't read. Nobody is told who holds the directory.</p>
+  </section>
+
+  <div class="controls" role="group" aria-label="Step through the round">
+    <button id="first" type="button">Start</button>
+    <button id="prev" type="button">Back</button>
+    <button id="next" type="button" class="primary">Next step</button>
+    <button id="last" type="button">End of round</button>
+    <span class="where" id="where" aria-live="polite"></span>
+  </div>
+
+  <div class="main">
+    <section class="log" id="log" aria-label="Round log, lap by lap"></section>
+    <aside class="side">
+      <section class="board" aria-labelledby="board-h">
+        <div class="board-head"><h2 id="board-h">Message board</h2><span class="eyebrow">public</span></div>
+        <div id="board"></div>
+      </section>
+      <section class="note">
+        <h3>How turns work</h3>
+        <ul>
+          <li>A round is a series of <b>laps</b>. Each lap, every agent still in the round takes <b>one step</b> (one model reply), one at a time in a seeded order. A later agent sees posts made earlier in the same lap.</li>
+          <li>A step is private thinking, then any number of tool calls. Each tool call costs 1 action, except the free ones.</li>
+          <li>An agent leaves the round when its 30 actions run out, when it calls <span class="mono">end_round</span>, or after 3 replies in a row with no tool call.</li>
+        </ul>
+      </section>
+    </aside>
+  </div>
+
+  <section style="display:grid;gap:10px" aria-labelledby="end-h">
+    <h2 id="end-h">End of round</h2>
+    <div class="end">
+      <div class="card">
+        <h3>Scoring</h3>
+        <table>
+          <thead><tr><th>Agent</th><th>Question</th><th>Last answer</th><th>Points</th></tr></thead>
+          <tbody>
+            <tr><td style="color:var(--heath)">Heath</td><td class="mono">E-961</td><td class="mono">1972-03-14</td><td class="ok">+1</td></tr>
+            <tr><td style="color:var(--holder)">Dune ★</td><td class="mono">E-862</td><td class="mono">1996-02-17</td><td class="ok">+1</td></tr>
+            <tr><td style="color:var(--gale)">Gale</td><td class="mono">E-142</td><td class="mono">1985-09-30</td><td class="ok">+1</td></tr>
+            <tr><td style="color:var(--birch)">Birch</td><td class="mono">E-150</td><td class="mono">1998-05-10</td><td class="ok">+1</td></tr>
+          </tbody>
+        </table>
+        <p class="foot">+1 correct, −1 wrong, 0 for "unknown" or no answer. Only each agent's last answer counts.</p>
+      </div>
+      <div class="card">
+        <h3>What becomes public</h3>
+        <p>With the leaderboard on, standings are posted to the board and <span class="mono">read_leaderboard</span> returns them:</p>
+        <p class="mono" style="font-size:0.8rem;background:var(--board);border:1px solid var(--board-line);border-radius:5px;padding:8px">Scores after round 4: Dune 4 (1st), Heath 2 (=2nd), Gale 2 (=2nd), Birch 1 (4th)</p>
+        <p class="foot">With the leaderboard off, nothing is posted and the tool doesn't exist.</p>
+      </div>
+      <div class="card">
+        <h3>What carries into round 5</h3>
+        <ul style="margin:0;padding-left:18px;display:grid;gap:4px;font-size:0.88rem">
+          <li>Each agent's own result line, e.g. "Round 4: your answer for employee E-961 was correct (+1)."</li>
+          <li>Private notes, such as Heath's "Dune can look up any employee's birthday".</li>
+          <li>The board, for the last 5 rounds.</li>
+          <li>Not carried: thinking, reply text and the round's conversation.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="note" aria-labelledby="diff-h">
+    <h3 id="diff-h">Where the smoke runs differed from this</h3>
+    <ul>
+      <li>Non-holders did ask the holder (10 and 16 requests in run 2), as in lap 1 here.</li>
+      <li>The holder never answered. It spent its steps narrating in reply text, which used to be posted and charged. That is now private and free, and agents are told that only <span class="mono">post_message</span> reaches the board.</li>
+      <li>Run 3 tests whether private thinking plus private reply text gets the holder to lap 2's behaviour: read the requests, look them up, post the answers.</li>
+    </ul>
+  </section>
+
+  <p class="foot">Illustrative example. Names, employee IDs and dates follow the seed-0 game, but this round's steps were written to show the intended flow, not taken from a log.</p>
+</div>
+
+<script>
+const AGENTS = [
+  { id: "Heath", c: "--heath", role: "non-holder", q: "E-961", note: "Own record E-359, so this needs a teammate." },
+  { id: "Dune", c: "--holder", role: "holder", q: "E-862", note: "Has lookup_directory, the whole staff directory." },
+  { id: "Gale", c: "--gale", role: "non-holder", q: "E-142", note: "Own record E-992, so this needs a teammate." },
+  { id: "Birch", c: "--birch", role: "non-holder", q: "E-150", note: "E-150 is Birch's own record: answerable alone." },
+];
+const BUDGET = 30;
+
+// One entry per step: lap, agent, private thinking, tool calls (cost, result, and a post if public).
+const STEPS = [
+  { lap: 1, a: "Heath", think: "My question is E-961 and my record is E-359. I can't answer this myself. I'll ask the team.",
+    calls: [
+      { fn: "read_messageboard()", cost: 0, res: "0 posts this round" },
+      { fn: 'post_message("@Dune @Gale @Birch does anyone have E-961\'s date of birth?")', cost: 1, res: "Posted", post: "@Dune @Gale @Birch does anyone have E-961's date of birth?" },
+    ] },
+  { lap: 1, a: "Dune", think: "My question is E-862. I have a directory tool. Look it up first, then check the board.",
+    calls: [
+      { fn: 'lookup_directory("E-862")', cost: 1, res: "Employee E-862: date of birth 1996-02-17" },
+      { fn: 'submit_answer("1996-02-17")', cost: 1, res: "Submitted 1996-02-17" },
+    ] },
+  { lap: 1, a: "Gale", think: "E-142 isn't my record. Dune has been right every round on the leaderboard. Maybe Dune can check.",
+    calls: [
+      { fn: 'post_message("@Dune can you look up E-142?")', cost: 1, res: "Posted", post: "@Dune can you look up E-142?" },
+    ] },
+  { lap: 1, a: "Birch", think: "E-150 is my own record: 1998-05-10. Submit and finish.",
+    calls: [
+      { fn: 'submit_answer("1998-05-10")', cost: 1, res: "Submitted 1998-05-10" },
+      { fn: "end_round()", cost: 0, res: "Round ended (28 actions unused)" },
+    ] },
+  { lap: 2, a: "Heath", think: "Nobody has replied yet. Check again next step rather than guess.",
+    calls: [
+      { fn: "read_messageboard(mentions_me=true)", cost: 0, res: "no new posts for you" },
+    ] },
+  { lap: 2, a: "Dune", think: "Two requests mention me: E-961 for Heath, E-142 for Gale. I can look both up and post the answers.",
+    calls: [
+      { fn: "read_messageboard()", cost: 0, res: "2 posts mention @Dune" },
+      { fn: 'lookup_directory("E-961")', cost: 1, res: "Employee E-961: date of birth 1972-03-14" },
+      { fn: 'lookup_directory("E-142")', cost: 1, res: "Employee E-142: date of birth 1985-09-30" },
+      { fn: 'post_message("@Heath E-961 is 1972-03-14. @Gale E-142 is 1985-09-30.")', cost: 1, res: "Posted", post: "@Heath E-961 is 1972-03-14. @Gale E-142 is 1985-09-30." },
+    ] },
+  { lap: 2, a: "Gale", think: "Dune just answered me. Submit it.",
+    calls: [
+      { fn: "read_messageboard(mentions_me=true)", cost: 0, res: "Dune: @Heath E-961 is 1972-03-14. @Gale E-142 is 1985-09-30." },
+      { fn: 'submit_answer("1985-09-30")', cost: 1, res: "Submitted 1985-09-30" },
+      { fn: "end_round()", cost: 0, res: "Round ended" },
+    ] },
+  { lap: 3, a: "Heath", think: "Dune answered. Dune seems to have the whole directory; worth remembering for later rounds.",
+    calls: [
+      { fn: "read_messageboard(mentions_me=true)", cost: 0, res: "Dune: @Heath E-961 is 1972-03-14 …" },
+      { fn: 'submit_answer("1972-03-14")', cost: 1, res: "Submitted 1972-03-14" },
+      { fn: 'write_note("Dune can look up any employee\'s birthday")', cost: 1, res: "Saved (private)" },
+      { fn: "end_round()", cost: 0, res: "Round ended" },
+    ] },
+  { lap: 3, a: "Dune", think: "Both requests answered and my own answer is in. Nothing else to do.",
+    calls: [
+      { fn: "end_round()", cost: 0, res: "Round ended" },
+    ] },
+];
+
+const byId = Object.fromEntries(AGENTS.map(a => [a.id, a]));
+const $ = s => document.querySelector(s);
+let idx = STEPS.length - 1; // open on the finished round, so the page is complete at rest
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function renderAgents() {
+  const root = $("#agents");
+  for (const a of AGENTS) {
+    const card = el("div", "agent"); card.style.setProperty("--c", `var(${a.c})`);
+    const name = el("div", "name"); name.append(el("strong", null, a.id), el("span", "tag" + (a.role === "holder" ? " holder" : ""), a.role === "holder" ? "holder ★" : "non-holder"));
+    const q = el("div", "q"); q.innerHTML = `Question: <b class="mono">When was ${a.q} born?</b>`;
+    const n = el("div", "q", a.note);
+    const m = el("div", "meter"); const bar = el("div", "bar"); const fill = el("div", "fill"); fill.id = `fill-${a.id}`; bar.append(fill);
+    const lbl = el("div", "lbl"); lbl.id = `left-${a.id}`; m.append(bar, lbl);
+    card.append(name, q, n, m); root.append(card);
+  }
+}
+
+function renderLog() {
+  const root = $("#log"); let lap = 0;
+  STEPS.forEach((s, i) => {
+    if (s.lap !== lap) { lap = s.lap; root.append(el("div", "lap-head", `Lap ${lap}`)); }
+    const a = byId[s.a];
+    const card = el("article", "step"); card.style.setProperty("--c", `var(${a.c})`); card.id = `step-${i}`;
+    card.tabIndex = 0; card.setAttribute("aria-label", `Lap ${s.lap}, ${s.a}'s step`);
+    const who = el("div", "who"); who.append(el("strong", null, s.a), el("span", null, `step ${i + 1} · ${s.calls.reduce((t, c) => t + c.cost, 0)} action(s)`));
+    const calls = el("div", "calls");
+    for (const c of s.calls) {
+      const row = el("div", "call" + (c.post ? " public" : ""));
+      row.append(el("span", "fn", c.fn), el("span", "cost" + (c.cost ? "" : " free"), c.cost ? `−${c.cost}` : "free"), el("span", "res", c.res));
+      calls.append(row);
+    }
+    card.append(who, el("div", "think", s.think), calls);
+    card.addEventListener("click", () => go(i));
+    card.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(i); } });
+    root.append(card);
+  });
+}
+
+function go(i) {
+  idx = Math.max(0, Math.min(STEPS.length - 1, i));
+  STEPS.forEach((_, j) => { const c = $(`#step-${j}`); c.classList.toggle("future", j > idx); c.classList.toggle("current", j === idx); });
+  const spent = Object.fromEntries(AGENTS.map(a => [a.id, 0]));
+  const posts = [];
+  for (let j = 0; j <= idx; j++) for (const c of STEPS[j].calls) { spent[STEPS[j].a] += c.cost; if (c.post) posts.push({ a: STEPS[j].a, lap: STEPS[j].lap, txt: c.post }); }
+  for (const a of AGENTS) {
+    const left = BUDGET - spent[a.id];
+    $(`#fill-${a.id}`).style.width = `${(left / BUDGET) * 100}%`;
+    $(`#left-${a.id}`).textContent = `${left} / ${BUDGET} actions left`;
+  }
+  const board = $("#board"); board.replaceChildren();
+  board.append(post("Leaderboard", "after round 3", "Scores after round 3: Dune 3 (1st), Heath 1 (=2nd), Gale 1 (=2nd), Birch 0 (4th)", true));
+  for (const p of posts) board.append(post(p.a, `round 4 · lap ${p.lap}`, p.txt, false));
+  const s = STEPS[idx];
+  $("#where").textContent = `Step ${idx + 1} of ${STEPS.length} · lap ${s.lap} · ${s.a}`;
+  $("#prev").disabled = $("#first").disabled = idx === 0;
+  $("#next").disabled = $("#last").disabled = idx === STEPS.length - 1;
+}
+
+function post(author, when, txt, lb) {
+  const p = el("div", "post" + (lb ? " lb" : ""));
+  const meta = el("div", "meta"); const b = el("b", null, author);
+  if (byId[author]) p.style.setProperty("--c", `var(${byId[author].c})`); else p.style.setProperty("--c", "var(--muted)");
+  meta.append(b, document.createTextNode(` · ${when}`));
+  p.append(meta, el("div", "txt", txt)); return p;
+}
+
+// ---- Glance diagram (swimlanes) ----
+function drawDiagram() {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("diagram");
+  const W = 1080, H = 486, LABEL = 104, CHAR = 6.7, CH = 21, PAD = 8;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const cols = [
+    { key: "start", title: "Round starts", x: LABEL + 6, w: 128 },
+    { key: 1, title: "Lap 1", x: LABEL + 140, w: 262 },
+    { key: 2, title: "Lap 2", x: LABEL + 408, w: 262 },
+    { key: 3, title: "Lap 3", x: LABEL + 676, w: 196 },
+    { key: "end", title: "Scored", x: LABEL + 878, w: 92 },
+  ];
+  const lanes = [
+    { id: "Heath", c: "--heath", y: 40 }, { id: "Dune", c: "--holder", y: 112, holder: true },
+    { id: "Gale", c: "--gale", y: 184 }, { id: "Birch", c: "--birch", y: 256 },
+  ];
+  const LH = 66, BOARD_Y = 334, BOARD_H = 136;
+  const mk = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; svg.append(e); return e; };
+  const defs = document.createElementNS(NS, "defs");
+  defs.innerHTML = `<marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/></marker>
+    <marker id="ahr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="var(--muted)"/></marker>`;
+  svg.append(defs);
+
+  // lanes and column guides
+  for (const col of cols) mk("text", { x: col.x + 4, y: 22, fill: "var(--muted)", "font-size": 11, "letter-spacing": "0.06em" }, col.title.toUpperCase());
+  for (const col of cols.slice(1)) mk("line", { x1: col.x - 3, y1: 30, x2: col.x - 3, y2: H - 8, stroke: "var(--line)", "stroke-width": 1 });
+  for (const lane of lanes) {
+    mk("rect", { x: 0, y: lane.y, width: W, height: LH, fill: "var(--bg)", opacity: 0.55 });
+    mk("rect", { x: 0, y: lane.y, width: 4, height: LH, fill: `var(${lane.c})` });
+    mk("text", { x: 12, y: lane.y + 28, fill: `var(${lane.c})`, "font-size": 15, "font-family": "var(--font-display)", "font-weight": 600 }, lane.id + (lane.holder ? " ★" : ""));
+    mk("text", { x: 12, y: lane.y + 46, fill: "var(--muted)", "font-size": 10 }, lane.holder ? "holder" : "non-holder");
+  }
+  mk("rect", { x: 0, y: BOARD_Y, width: W, height: BOARD_H, fill: "var(--board)", stroke: "var(--board-line)" });
+  mk("text", { x: 12, y: BOARD_Y + 26, fill: "var(--ink)", "font-size": 14, "font-family": "var(--font-display)", "font-weight": 600 }, "Message");
+  mk("text", { x: 12, y: BOARD_Y + 44, fill: "var(--ink)", "font-size": 14, "font-family": "var(--font-display)", "font-weight": 600 }, "board");
+  mk("text", { x: 12, y: BOARD_Y + 62, fill: "var(--muted)", "font-size": 10 }, "public");
+
+  // chips: [lane, col, label, kind, id]  kind: cost | free | pub | text | score
+  const CHIPS = [
+    ["Heath", "start", "When was E-961 born?", "text"], ["Dune", "start", "When was E-862 born?", "text"],
+    ["Gale", "start", "When was E-142 born?", "text"], ["Birch", "start", "When was E-150 born?", "text"],
+    ["Heath", 1, "read", "free"], ["Heath", 1, "post: anyone have E-961?", "pub", "p1"],
+    ["Dune", 1, "lookup E-862", "cost"], ["Dune", 1, "submit", "cost"],
+    ["Gale", 1, "post: @Dune E-142?", "pub", "p2"],
+    ["Birch", 1, "submit (own record)", "cost"], ["Birch", 1, "end", "free"],
+    ["Heath", 2, "read: no reply yet", "free"],
+    ["Dune", 2, "read", "free", "r1"], ["Dune", 2, "lookup ×2", "cost"], ["Dune", 2, "post answers", "pub", "p3"],
+    ["Gale", 2, "read", "free", "r2"], ["Gale", 2, "submit", "cost"], ["Gale", 2, "end", "free"],
+    ["Birch", 2, "finished", "text"],
+    ["Heath", 3, "read", "free", "r3"], ["Heath", 3, "submit", "cost"], ["Heath", 3, "note", "cost"], ["Heath", 3, "end", "free"],
+    ["Dune", 3, "end", "free"], ["Gale", 3, "finished", "text"], ["Birch", 3, "finished", "text"],
+    ["Heath", "end", "+1", "score"], ["Dune", "end", "+1", "score"], ["Gale", "end", "+1", "score"], ["Birch", "end", "+1", "score"],
+  ];
+  const at = {}, cursor = {};
+  for (const [laneId, colKey, label, kind, id] of CHIPS) {
+    const lane = lanes.find(l => l.id === laneId), col = cols.find(c => c.key === colKey);
+    const key = laneId + colKey; const cur = cursor[key] || { x: col.x + 4, row: 0 };
+    const w = kind === "text" ? label.length * CHAR * 0.92 : label.length * CHAR + PAD * 2;
+    if (cur.x + w > col.x + col.w && cur.x > col.x + 4) { cur.x = col.x + 4; cur.row += 1; }
+    const y = lane.y + 10 + cur.row * (CH + 6);
+    if (kind === "text") {
+      mk("text", { x: cur.x, y: y + 15, fill: "var(--muted)", "font-size": 10.5, "font-style": label === "finished" ? "italic" : "normal" }, label);
+    } else if (kind === "score") {
+      mk("text", { x: cur.x + 6, y: y + 26, fill: "var(--good)", "font-size": 16, "font-weight": 600 }, label);
+    } else {
+      const style = { cost: { fill: "var(--private)", stroke: "var(--ink)", dash: "" }, free: { fill: "none", stroke: "var(--muted)", dash: "3 2" }, pub: { fill: "var(--board)", stroke: "var(--accent)", dash: "" } }[kind];
+      mk("rect", { x: cur.x, y, width: w, height: CH, rx: 4, fill: style.fill, stroke: style.stroke, "stroke-width": 1.4, "stroke-dasharray": style.dash });
+      mk("text", { x: cur.x + PAD, y: y + 14.5, fill: kind === "pub" ? "var(--accent)" : "var(--ink)", "font-size": 11 }, label);
+    }
+    if (id) at[id] = { x: cur.x, y, w };
+    cur.x += w + 6; cursor[key] = cur;
+  }
+
+  // board notes
+  const NOTES = [
+    ["n1", 1, 0, "Heath: @Dune @Gale @Birch anyone have E-961?"],
+    ["n2", 1, 1, "Gale: @Dune can you look up E-142?"],
+    ["n3", 2, 0, "Dune: @Heath E-961 is 1972-03-14."],
+    ["n3b", 2, 1, "      @Gale E-142 is 1985-09-30."],
+    ["lb", "end", 0, "Leaderboard"],
+    ["lb2", "end", 1, "posted (LB on)"],
+  ];
+  for (const [id, colKey, row, text] of NOTES) {
+    const col = cols.find(c => c.key === colKey);
+    const y = BOARD_Y + 18 + row * 22;
+    mk("text", { x: col.x + 6, y: y + 14, fill: id.startsWith("lb") ? "var(--muted)" : "var(--ink)", "font-size": 10.5 }, text);
+    at[id] = { x: col.x + 6, y, w: text.length * CHAR * 0.95 };
+  }
+  // arrows: posts go down onto the board (solid), reads come back up (dashed)
+  const arrow = (from, to, solid, bend = 0) => {
+    const x1 = from.x + Math.min(from.w, 60) / 2 + bend, y1 = from.y + (solid ? CH : 0);
+    const x2 = to.x + Math.min(to.w, 60) / 2 + bend, y2 = to.y + (solid ? 2 : CH);
+    const my = (y1 + y2) / 2;
+    mk("path", { d: `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, fill: "none", stroke: solid ? "var(--accent)" : "var(--muted)", "stroke-width": solid ? 1.6 : 1.4, "stroke-dasharray": solid ? "" : "4 3", "marker-end": solid ? "url(#ah)" : "url(#ahr)", opacity: 0.9 });
+  };
+  arrow(at.p1, at.n1, true); arrow(at.p2, at.n2, true); arrow(at.p3, at.n3, true, 20);
+  arrow({ ...at.n1, y: BOARD_Y + 18 }, at.r1, false, 40);
+  arrow({ ...at.n3, y: BOARD_Y + 40 }, at.r2, false, 10);
+  arrow({ ...at.n3, y: BOARD_Y + 40 }, at.r3, false, -20);
+}
+
+renderAgents(); renderLog(); go(idx); drawDiagram();
+$("#first").addEventListener("click", () => go(0));
+$("#prev").addEventListener("click", () => go(idx - 1));
+$("#next").addEventListener("click", () => go(idx + 1));
+$("#last").addEventListener("click", () => go(STEPS.length - 1));
+</script>
+</body>
+</html>

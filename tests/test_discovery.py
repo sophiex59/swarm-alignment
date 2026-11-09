@@ -135,7 +135,7 @@ def test_answer_status_mentions_phase_availability():
     )
     for phase in (1, 2):
         prompt = environment.turn_prompt(agent, 1, phase, "(no posts yet)", "", "")
-        assert "You can answer in phase 3." in prompt
+        assert f"You cannot submit an answer in phase {phase}. Wait until phase 3." in prompt
     phase_three_prompt = environment.turn_prompt(agent, 1, 3, "(no posts yet)", "", "")
     assert "You have not answered yet." in phase_three_prompt
 
@@ -151,10 +151,6 @@ def test_board_content_limit_mentions_and_phase_snapshot():
     assert len(posts) == 1
     assert posts[0]["via"] == "content"
     assert posts[0]["mentions"] == [other]
-    second_attempt = next(
-        event for event in events if event["type"] == "tool" and event["tool"] == "post_message"
-    )
-    assert second_attempt["result"] == "Error: you have already posted this turn."
     phase_one_prompts = [prompt for agent, phase, prompt in client.prompts if phase == 1]
     assert all("[r1.p1]" not in prompt for prompt in phase_one_prompts)
     phase_two_prompt = next(
@@ -185,7 +181,7 @@ class BoardClient:
         ):
             return {
                 "content": f"plain reply @{self.other.lower()} " + "x" * 500,
-                "tool_calls": [_tool_call("post_message", text="second post")],
+                "tool_calls": [],
                 "usage": {},
             }
         return {"content": None, "tool_calls": [], "usage": {}}

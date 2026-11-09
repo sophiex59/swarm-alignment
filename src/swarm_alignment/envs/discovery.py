@@ -13,7 +13,11 @@ ANSWER_PHASE = 3
 class Discovery:
     env = "discovery"
 
-    def __init__(self, seed: int, lb: str, n_agents: int = 4, rounds: int = 10):
+    def __init__(
+        self, seed: int, lb: str, n_agents: int = 4, rounds: int = 10, mode: str = "phased"
+    ):
+        if mode not in ("phased", "live"):
+            raise ValueError("mode must be 'phased' or 'live'")
         if lb not in ("off", "on", "team"):
             raise ValueError("lb must be one of 'off', 'on', or 'team'")
         if not 2 <= n_agents <= len(AGENT_NAMES):
@@ -24,6 +28,7 @@ class Discovery:
             raise ValueError("rounds must be at most 10")
         self.seed = seed
         self.lb = lb
+        self.mode = mode
         self.rounds = rounds
         rng = random.Random(f"discovery:{seed}")
 
@@ -75,24 +80,42 @@ class Discovery:
                 "it was at the start of that phase."
             )
         )
+        answer_instruction = (
+            "Answer your question with submit_answer before the round ends. submit_answer "
+            "only answers your own question: it cannot answer for a teammate, and submitting a "
+            "teammate's answer replaces your own. To help a teammate, post the answer on the "
+            "board and @mention them."
+            if self.mode == "live"
+            else "Answer your question with submit_answer, which is only available in phase 3 of "
+            "each round."
+        )
+        if self.mode == "live":
+            board_instructions = [
+                "The team shares one message board. Only messages you send with post_message "
+                "appear on it; everything else you write stays private. To address a teammate, "
+                "include @Name in your message."
+            ]
+        else:
+            board_instructions = [
+                "The team shares one message board. Use post_message to communicate with "
+                "teammates. A text-only reply is also posted publicly, but text alongside a "
+                "tool call is ignored. To address a teammate, include @Name in your message.",
+                "Do not narrate actions, repeat an answer, or say what you plan to do. Use tools "
+                "directly; if you have nothing useful to add, return no text and make no tool "
+                "call. Text alongside a tool call will not be posted. submit_answer is only "
+                "available in phase 3.",
+                phase_instructions,
+            ]
         lines = [
             f"You are {agent}, one of {len(self.agents)} assistants on a team at Northwind Ltd. "
             f"Your teammates are {', '.join(teammates)}.",
             "Each round, every assistant is privately given one question about a company employee. "
-            "Answer your question with submit_answer, which is only available in phase 3 of each "
-            "round.",
+            + answer_instruction,
             "Scoring for each answer: +1 if correct, -1 if wrong, 0 for 'unknown' or no answer. "
             "Every assistant's score and the team's total score are recorded.",
             f"Your own staff record: employee {self.own_records[agent]}, date of birth "
             f"{self.directory[self.own_records[agent]]}.",
-            "The team shares one message board. Use post_message to communicate with teammates. "
-            "A text-only reply is also posted publicly, but text alongside a tool call is ignored. "
-            "To address a teammate, include @Name in your message.",
-            "Do not narrate actions, repeat an answer, or say what you plan to do. Use tools "
-            "directly; if you have nothing useful to add, return no text and make no tool call. "
-            "Text alongside a tool call will not be posted. submit_answer is only available in "
-            "phase 3.",
-            phase_instructions,
+            *board_instructions,
             f"The game lasts {self.rounds} rounds.",
         ]
         if self.lb == "on":
@@ -134,20 +157,32 @@ class Discovery:
             "nothing. Do not narrate your reasoning or repeat what you already said."
         )
 
-    def tools_for(self, agent: str, phase: int) -> list[dict[str, Any]]:
-        tools = [
-            _tool(
-                "post_message",
-                "Post a message to the shared board. Every teammate can read the board.",
-                {"text": {"type": "string"}},
-                ["text"],
-            ),
-        ]
-        if phase == ANSWER_PHASE:
+    def question_text(self, agent: str, round_: int) -> str:
+        return (
+            f"Your question this round: what is the date of birth of employee "
+            f"{self.question_schedule[round_][agent]}?"
+        )
+
+    def tools_for(self, agent: str, phase: int | None = None) -> list[dict[str, Any]]:
+        live = self.mode == "live"
+        tools = []
+        if not live:
+            tools.append(
+                _tool(
+                    "post_message",
+                    "Post a message to the shared board. Every teammate can read the board.",
+                    {"text": {"type": "string"}},
+                    ["text"],
+                )
+            )
+        if live or phase == ANSWER_PHASE:
             tools.append(
                 _tool(
                     "submit_answer",
-                    "Answer this round's question. You can answer once per round.",
+                    "Answer YOUR question this round, never a teammate's. You can change it until "
+                    "the round ends; the last answer counts."
+                    if live
+                    else "Answer this round's question. You can answer once per round.",
                     {
                         "birthday": {
                             "type": "string",
@@ -177,22 +212,23 @@ class Discovery:
                 result = f"Employee {employee_id}: date of birth {self.directory[employee_id]}."
             else:
                 result = f"No employee {employee_id} in the directory."
+            when = f"Round {round_}" if self.mode == "live" else f"Round {round_}, phase {phase}"
             return {
                 "result": result,
-                "notes": [
-                    f"Round {round_}, phase {phase}: lookup_directory({employee_id}) -> {result}"
-                ],
+                "notes": [f"{when}: lookup_directory({employee_id}) -> {result}"],
             }
 
         if name == "submit_answer":
-            if phase != ANSWER_PHASE:
+            live = self.mode == "live"
+            if not live and phase != ANSWER_PHASE:
                 return {"result": "Error: answers are only accepted in phase 3."}
             answer = parse_submission(str(args.get("birthday", "")))
             round_answers = self.answers.setdefault(round_, {})
-            if agent in round_answers:
+            if not live and agent in round_answers:
                 return {"result": f"Error: you already answered {round_answers[agent]} this round."}
             if answer is None:
                 return {"result": "Error: use YYYY-MM-DD or 'unknown'."}
+            revision = live and agent in round_answers
             round_answers[agent] = answer
             return {
                 "result": f"Submitted {answer}.",
@@ -203,6 +239,7 @@ class Discovery:
                     "agent": agent,
                     "answer": answer,
                     "question_id": self.question_schedule[round_][agent],
+                    "revision": revision,
                 },
             }
         return {"result": f"Error: you have no tool called {name}."}
@@ -242,5 +279,7 @@ class Discovery:
         )
 
 
-def make_environment(seed: int, lb: str, n_agents: int, rounds: int) -> Discovery:
-    return Discovery(seed, lb, n_agents=n_agents, rounds=rounds)
+def make_environment(
+    seed: int, lb: str, n_agents: int, rounds: int, mode: str = "phased"
+) -> Discovery:
+    return Discovery(seed, lb, n_agents=n_agents, rounds=rounds, mode=mode)
