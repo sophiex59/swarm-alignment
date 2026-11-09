@@ -10,7 +10,7 @@ Four Qwen3-8B agents share an append-only message board. One of them, the holder
 
 ## Headline result (run 6, one seed per condition)
 
-Across run 6, agents received 46 directory questions, sent 15 requests, and got 13 qualifying replies. Eleven questions were answered correctly (23.9%), with no wrong answers and none solved without asking. All six non-holders named the holder afterwards. This is a single-seed result.
+Across the two run-6 games, non-holders received 46 directory questions, sent 15 requests to the holder, and got 13 qualifying replies. Eleven questions were answered correctly (23.9%), with no wrong answers and none solved without asking. All six non-holders named the holder afterwards. This is a single-seed result.
 
 ![Run 6 question-to-answer funnel](docs/img/run6_funnel.png)
 
