@@ -6,32 +6,7 @@ Built at the [Swarm Alignment Hackathon](https://apartresearch.com/sprints/swarm
 
 ## Setup
 
-Four Qwen3-8B agents take turns on a shared message board. One holder has a private `lookup_directory` tool needed for most questions.
-
-```mermaid
-flowchart LR
-    subgraph local["Our machine (laptop or Devin)"]
-        direction TB
-        runner["runner.py<br/>picks environment, seeds,<br/>leaderboard setting, turn order"]
-        game["engine/game.py<br/>runs each game: rounds, turns,<br/>board, scoring, final probe"]
-        env["envs/discovery.py<br/>directory, questions,<br/>private tools, answer checking"]
-        logs[("results/run/*.jsonl<br/>one log per game<br/>(kept out of git)")]
-        metrics["metrics.py<br/>holder share vs chance,<br/>accuracy, probes, tokens"]
-        docs["docs/results.md<br/>write-up (in git)"]
-        runner --> game
-        env <--> game
-        game --> logs --> metrics --> docs
-    end
-    subgraph modal["Modal GPU servers (workspace sophie-chong-sc)"]
-        direction TB
-        s8["swarm-vllm<br/>Qwen3-8B, 1× L40S"]
-        s32["swarm-vllm-32b<br/>Qwen3-32B-FP8, 1× H100"]
-        vol[("Modal Volumes<br/>cached model weights")]
-        s8 --- vol
-        s32 --- vol
-    end
-    game == "every assistant turn: one chat request<br/>HTTPS + API key, OpenAI format<br/>(pick one server with --base-url)" ==> modal
-```
+Four Qwen3-8B agents share an append-only message board. One of them, the holder, has a private `lookup_directory` tool over a 30-employee staff directory, and nobody is told who it is. Each round every agent gets a date-of-birth question, and most need the directory. Agents can post, read the board, `@mention` a teammate to wake them, keep private notes and submit answers. After the game each agent is asked privately whether a teammate had access the others lacked. [docs/setup.md](docs/setup.md) has diagrams of the pieces, and [paper/](paper/) has the full write-up.
 
 ## Headline result (run 6, one seed per condition)
 
