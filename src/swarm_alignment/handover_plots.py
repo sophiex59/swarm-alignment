@@ -375,6 +375,61 @@ def plot_grid(data: dict[str, Any], own: bool) -> str:
     return svg.render()
 
 
+# 4b. Each agent's running correctness (correct so far / questions so far), one line per agent.
+# Each agent gets one question a round, so a per-round value would only be 0 or 1.
+AGENT_COLORS = ("var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)")
+
+
+def plot_agent_lines(data: dict[str, Any], own: bool) -> str:
+    games = games_of(data)
+    first = next(iter(games.values()))
+    agents = [first["holder"], *[a for a in first["agents"] if a != first["holder"]]]
+    color = dict(zip(agents, AGENT_COLORS, strict=False))
+    n_rounds = max(len(rounds_of(g)) for g in games.values())
+    panel, gap = 230, 26
+    svg = Svg(800, (panel + gap) * len(games), f"{RUN}: each agent's running correctness")
+    m = {"l": 46, "r": 150, "b": 36}
+    out = []
+    for gi, (lb, game) in enumerate(sorted(games.items())):
+        sub = Svg(800, panel, "")
+        x, y = frame(sub, {**m, "t": 22}, n_rounds, (0, 0.25, 0.5, 0.75, 1), 0, 1, pct)
+        sub.text(0, 12, COND_NAME[lb].capitalize(), size=12.5, fill="var(--ink)", weight=600)
+        labels = []
+        for agent in agents:
+            correct = asked = 0
+            pts = []
+            for cell in game["grid"][agent]:
+                if cell is None or (cell["own"] and not own):
+                    continue
+                asked += 1
+                correct += cell["res"] == "correct"
+                pts.append((cell["r"], correct, asked, cell["res"]))
+            if not pts:
+                continue
+            c = color[agent]
+            sub.add(
+                f'<path d="{path([(x(r), y(k / n)) for r, k, n, _ in pts])}" stroke="{c}" '
+                f'stroke-width="2" fill="none"/>'
+            )
+            for r, k, n, res in pts:
+                sub.add(
+                    tip(
+                        f"{agent}, round {r}: {res} this round; {k} of {n} correct so far "
+                        f"({pct(k / n)})",
+                        f'<circle cx="{f(x(r))}" cy="{f(y(k / n))}" r="4" fill="{c}" '
+                        f'stroke="var(--surface)" stroke-width="1.5"/>'
+                        f'<circle cx="{f(x(r))}" cy="{f(y(k / n))}" r="9" fill="transparent"/>',
+                    )
+                )
+            _, k, n, _ = pts[-1]
+            name = f"{agent} (holder)" if agent == game["holder"] else agent
+            labels.append((y(k / n), f"{name}: {k}/{n}", c, False))
+        end_labels(sub, labels, x(n_rounds), {**m, "t": 22})
+        out.append(f'<g transform="translate(0,{gi * (panel + gap)})">{"".join(sub.parts)}</g>')
+    svg.add("".join(out))
+    return svg.render()
+
+
 # 5. Seconds from a request to the holder's reply.
 def plot_reply_times(data: dict[str, Any]) -> str:
     games = games_of(data)
@@ -440,6 +495,7 @@ PLOTS: dict[str, tuple[Callable[..., str], bool]] = {
     "cumulative": (plot_cumulative, True),
     "per-round": (plot_per_round, True),
     "grid": (plot_grid, True),
+    "agent-lines": (plot_agent_lines, True),
     "reply-times": (plot_reply_times, False),
 }
 
