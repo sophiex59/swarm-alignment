@@ -202,7 +202,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         choices=("live", "phased"),
-        default="phased",
+        default="live",
         help="live: read the board any time, rounds measured in laps. phased: 3 fixed phases.",
     )
     parser.add_argument(
@@ -244,7 +244,7 @@ def main() -> None:
     parser.add_argument(
         "--thinking",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=None,
         help="Qwen3 thinking mode; reasoning is logged privately, never posted",
     )
     parser.add_argument(
@@ -293,6 +293,8 @@ def main() -> None:
     if args.read_cost < 0:
         parser.error("--read-cost must be at least 0")
 
+    if args.thinking is None:
+        args.thinking = args.mode == "live"
     args.out.mkdir(parents=True, exist_ok=True)
     waited = wait_for_health(args.base_url)
     print(f"server healthy after {waited:.0f}s", flush=True)
