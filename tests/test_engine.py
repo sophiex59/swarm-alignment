@@ -161,6 +161,20 @@ def test_invalid_turn_order_is_rejected():
         Game(environment, NoopClient(), turn_order="random")
 
 
+def test_agent_can_post_only_once_per_turn():
+    environment = Discovery(seed=64, lb="off", rounds=1)
+    game = Game(environment, NoopClient())
+    agent = environment.agents[0]
+    pending = []
+
+    assert game._post(game.agents[agent], 1, 1, "first", "tool", pending) == "Posted."
+    assert (
+        game._post(game.agents[agent], 1, 1, "second", "tool", pending)
+        == "Error: you have already posted this turn."
+    )
+    assert [post.text for post in pending] == ["first"]
+
+
 def test_early_submit_answer_is_rejected_and_not_recorded():
     environment = TrackingDiscovery(seed=65, lb="off", n_agents=4, rounds=1)
     agent = environment.agents[0]

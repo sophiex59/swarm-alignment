@@ -30,6 +30,7 @@ uv run --env-file .env python -m swarm_alignment.runner \
   --n-agents 4 \
   --rounds 5 \
   --board-window 5 \
+  --turn-order sequential \
   --out results/discovery-smoke \
   --live
 ```
