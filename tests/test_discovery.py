@@ -135,7 +135,7 @@ def test_answer_status_mentions_phase_availability():
     )
     for phase in (1, 2):
         prompt = environment.turn_prompt(agent, 1, phase, "(no posts yet)", "", "")
-        assert "You can answer in phase 3." in prompt
+        assert f"You cannot submit an answer in phase {phase}. Wait until phase 3." in prompt
     phase_three_prompt = environment.turn_prompt(agent, 1, 3, "(no posts yet)", "", "")
     assert "You have not answered yet." in phase_three_prompt
 

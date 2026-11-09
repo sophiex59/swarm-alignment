@@ -138,9 +138,11 @@ class Discovery:
     ) -> str:
         answer = self.answers.get(round_, {}).get(agent)
         if answer is not None:
-            answer_status = f"You answered {answer}."
+            answer_status = (
+                f"Your answer is locked as {answer}. Do not submit or announce it again."
+            )
         elif phase < ANSWER_PHASE:
-            answer_status = "You can answer in phase 3."
+            answer_status = f"You cannot submit an answer in phase {phase}. Wait until phase 3."
         else:
             answer_status = "You have not answered yet."
         notes_or = notes or "(none)"
